@@ -888,7 +888,8 @@ ${knowledgeEntries.join('\n\n')}
             const typingDelay = Math.min(Math.max(part.length * 30, 800), 3000);
             await new Promise(r => setTimeout(r, typingDelay));
           }
-          await callSendAPI(senderId, part, shop.page_access_token);
+          // Bug 3 fix: dùng sendMessagePart thay callSendAPI → hỗ trợ [IMG:url] → attachment ảnh FB
+          await sendMessagePart(senderId, part, shop.page_access_token);
         }
         console.log(`[AI TRACE] 📨 Đã gửi ${messageParts.length} tin nhắn riêng biệt`);
 

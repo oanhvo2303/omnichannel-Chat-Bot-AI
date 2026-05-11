@@ -77,20 +77,41 @@ async function executeAIOrder(args, shopId, customerId) {
 
     let product = null;
 
-    // Strategy 1: LIKE match với toàn bộ tên
+    // Bug 5 fix: Scored matching — lấy TẤT CẢ candidates, chọn product khớp nhiều keyword nhất
+    // Tránh lấy nhầm sản phẩm đầu tiên khi có nhiều SP tên gần giống
+
+    // Strategy 1: Exact full-name match (highest priority)
     product = await db.get(
-      `SELECT * FROM Products WHERE shop_id = ? AND LOWER(name) LIKE ? AND stock_quantity > 0`,
-      [shopId, `%${product_name.toLowerCase()}%`]
+      `SELECT * FROM Products WHERE shop_id = ? AND LOWER(name) = ? AND stock_quantity > 0`,
+      [shopId, product_name.toLowerCase()]
     );
 
-    // Strategy 2: Match từng từ khóa
-    if (!product && keywords.length > 0) {
-      for (const kw of keywords) {
-        product = await db.get(
-          `SELECT * FROM Products WHERE shop_id = ? AND LOWER(name) LIKE ? AND stock_quantity > 0`,
-          [shopId, `%${kw}%`]
-        );
-        if (product) break;
+    if (!product) {
+      // Strategy 2: Fetch candidates khớp bất kỳ keyword, score theo số keyword match
+      const allProducts = await db.all(
+        `SELECT * FROM Products WHERE shop_id = ? AND stock_quantity > 0`,
+        [shopId]
+      );
+
+      let bestScore = 0;
+      for (const p of allProducts) {
+        const pName = p.name.toLowerCase().replace(/[^a-záàảãạăắặằẵẳâấậầẫẩđéèẻẽẹêếệềễểíìỉĩịóòỏõọôốộồỗổơớợờỡởúùủũụưứựừữửýỳỷỹỵ0-9\s]/g, '');
+        // Tính số keyword của AI có trong tên sản phẩm
+        const score = keywords.filter(kw => pName.includes(kw)).length;
+        // Bonus: tên SP chứa nguyên chuỗi tên AI yêu cầu
+        const fullBonus = pName.includes(product_name.toLowerCase()) ? 5 : 0;
+        const total = score + fullBonus;
+        if (total > bestScore) {
+          bestScore = total;
+          product = p;
+        }
+      }
+
+      // Nếu score = 0 → không có SP nào match
+      if (bestScore === 0) product = null;
+
+      if (product) {
+        console.log(`[ORDER EXECUTOR] 📊 Scored match: "${product.name}" (score=${bestScore}/${keywords.length}) cho yêu cầu "${product_name}"`);
       }
     }
 
@@ -99,7 +120,7 @@ async function executeAIOrder(args, shopId, customerId) {
       return {
         success: false,
         error: 'product_not_found',
-        message: `Shop chưa có sản phẩm "${product_name}" trong kho ạ. Bạn có thể mô tả rõ hơn không?`,
+        message: `Shop chưa có sản phẩm "${product_name}" trong kho 😔. Bạn có thể mô tả rõ hơn không?`,
       };
     }
 

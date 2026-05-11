@@ -44,7 +44,7 @@ function UploadZone({ onUploaded }) {
 
     for (const file of files) {
       const fd = new FormData();
-      fd.append('media', file);
+      fd.append('file', file); // Bug 1 fix: backend expects 'file' not 'media'
       try {
         const res = await authFetch(`${API_BASE}/api/upload`, { method: 'POST', body: fd });
         const data = await res.json();
@@ -239,7 +239,8 @@ export default function MediaLibraryPage() {
     try {
       const res = await authFetch(`${API_BASE}/api/upload/library`);
       const data = await res.json();
-      setItems(Array.isArray(data) ? data : []);
+      // Bug 2 fix: backend returns { items: [] }, not a raw array
+      setItems(Array.isArray(data) ? data : (data.items || []));
     } catch (e) {
       toast({ title: 'Lỗi tải thư viện', description: e.message, variant: 'destructive' });
     } finally {

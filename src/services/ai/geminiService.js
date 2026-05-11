@@ -559,72 +559,54 @@ CHÚ Ý VỀ PHONG CÁCH TIN NHẮN:
       const response = result.response;
       const elapsed = Date.now() - startTime;
 
-      // ★ Step 2: Kiểm tra xem có Function Call không
-      const candidate = response.candidates?.[0];
-      const parts = candidate?.content?.parts || [];
+      // Bug 4 fix: filter() để xử lý TẤT CẢ function calls (không chỉ cái đầu tiên)
+      const functionCallParts = parts.filter(p => p.functionCall);
 
-      const functionCallPart = parts.find(p => p.functionCall);
-
-      if (functionCallPart) {
+      if (functionCallParts.length > 0) {
         // ═══════════════════════════════════════
-        // AI QUYẾT ĐỊNH GỌI FUNCTION
+        // AI QUYẾT ĐỊNH GỌI FUNCTION(S)
         // ═══════════════════════════════════════
-        const fc = functionCallPart.functionCall;
-        console.log(`[GEMINI AGENTIC] 🔧 FUNCTION CALL detected sau ${elapsed}ms!`);
-        console.log(`[GEMINI AGENTIC]   📞 Function: ${fc.name}`);
-        console.log(`[GEMINI AGENTIC]   📋 Args:`, JSON.stringify(fc.args));
+        console.log(`[GEMINI AGENTIC] 🔧 ${functionCallParts.length} FUNCTION CALL(S) detected sau ${elapsed}ms!`);
 
-        let toolResult = { success: false, message: 'Unknown tool' };
         const toolCalls = [];
+        const functionResponses = [];
 
-        if (fc.name === 'create_system_order') {
-          // Execute tạo đơn thật
-          toolResult = await executeAIOrder(fc.args, shopId, customerId);
-          toolCalls.push({
-            name: fc.name,
-            args: fc.args,
-            result: toolResult,
-          });
-        } else if (fc.name === 'update_customer_tags') {
-          // Execute gắn/gỡ thẻ khách hàng
-          toolResult = await executeAITag(fc.args, shopId, customerId);
-          toolCalls.push({
-            name: fc.name,
-            args: fc.args,
-            result: toolResult,
-          });
-        } else if (fc.name === 'execute_bot_script') {
-          // AI chọn kịch bản bằng ID → hệ thống sẽ thực thi ở controller
-          const ruleId = fc.args?.rule_id;
-          toolResult = { success: true, message: `Kịch bản #${ruleId} sẽ được hệ thống gửi cho khách.`, rule_id: ruleId };
-          toolCalls.push({
-            name: fc.name,
-            args: fc.args,
-            result: toolResult,
+        for (const fcPart of functionCallParts) {
+          const fc = fcPart.functionCall;
+          console.log(`[GEMINI AGENTIC]   📞 Function: ${fc.name} | Args:`, JSON.stringify(fc.args));
+
+          let toolResult = { success: false, message: 'Unknown tool' };
+
+          if (fc.name === 'create_system_order') {
+            toolResult = await executeAIOrder(fc.args, shopId, customerId);
+          } else if (fc.name === 'update_customer_tags') {
+            toolResult = await executeAITag(fc.args, shopId, customerId);
+          } else if (fc.name === 'execute_bot_script') {
+            const ruleId = fc.args?.rule_id;
+            toolResult = { success: true, message: `Kịch bản #${ruleId} sẽ được hệ thống gửi cho khách.`, rule_id: ruleId };
+          }
+
+          toolCalls.push({ name: fc.name, args: fc.args, result: toolResult });
+          functionResponses.push({
+            functionResponse: {
+              name: fc.name,
+              response: { result: toolResult.message || JSON.stringify(toolResult) },
+            },
           });
         }
 
-        // ★ Step 3: Feed kết quả trở lại Gemini để sinh câu phản hồi tự nhiên
-        console.log(`[GEMINI AGENTIC] 📤 Gửi functionResponse trở lại Gemini...`);
-        const responseStep2 = await chatSession.sendMessage([
-          {
-            functionResponse: {
-              name: fc.name,
-              response: {
-                result: toolResult.message || JSON.stringify(toolResult),
-              },
-            },
-          },
-        ]);
+        // ★ Step 3: Feed tất cả kết quả về Gemini 1 lần → câu trả lời tự nhiên
+        console.log(`[GEMINI AGENTIC] 📤 Gửi ${functionResponses.length} functionResponse(s) về Gemini...`);
+        const responseStep2 = await chatSession.sendMessage(functionResponses);
 
         const finalText = responseStep2.response.text();
         const totalElapsed = Date.now() - startTime;
-
         console.log(`[GEMINI AGENTIC] ✅ Final response sau ${totalElapsed}ms: "${finalText?.substring(0, 100)}..."`);
         console.log('─'.repeat(60));
 
+        const anySuccess = toolCalls.some(t => t.result?.success);
         return {
-          intent: toolResult.success ? 'ĐẶT_HÀNG' : 'HỖ_TRỢ',
+          intent: anySuccess ? 'ĐẶT_HÀNG' : 'HỖ_TRỢ',
           reply: finalText,
           toolCalls,
         };
