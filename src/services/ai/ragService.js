@@ -76,20 +76,43 @@ async function retrieveFAQ(shopId, messageText, integrationId = null) {
     return intersection / (setA.size + setB.size - intersection);
   };
 
-  // Synonym expansion cho thương mại Việt Nam thường gặp
+  // Synonym expansion — hỗ trợ cả single-word key VÀ multi-word key (phrase)
+  // Bug fix: multi-word keys như 'tra hang', 'thanh toan' cần so sánh với bigrams từ message
   const SYNONYMS = {
-    'ship': ['giao hang', 'van chuyen', 'phi giao'],
-    'giao': ['ship', 'van chuyen', 'mang den'],
-    'gia': ['bao nhieu', 'cost', 'phi', 'tien'],
-    'mua': ['dat hang', 'chot', 'order'],
-    'tra hang': ['hoan hang', 'doi tra', 'bao hanh'],
-    'thanh toan': ['chuyen khoan', 'tra tien', 'payment'],
+    // Single-word keys
+    'ship':      ['giao hang', 'van chuyen', 'phi giao'],
+    'giao':      ['ship', 'van chuyen', 'mang den'],
+    'gia':       ['bao nhieu', 'cost', 'phi', 'tien'],
+    'mua':       ['dat hang', 'chot', 'order'],
+    'huy':       ['hoan', 'tra', 'cancel'],
+    'doi':       ['hoan doi', 'tra hang', 'exchange'],
+    // Multi-word phrase keys — sẽ được check với msg bigrams/trigrams
+    'tra hang':  ['hoan hang', 'doi tra', 'bao hanh', 'return'],
+    'thanh toan':['chuyen khoan', 'tra tien', 'payment', 'ck'],
+    'bao hanh':  ['doi tra', 'bao tri', 'sua chua', 'warranty'],
+    'phi ship':  ['phi giao', 'cuoc van chuyen', 'ship fee'],
+    'dat hang':  ['mua hang', 'chot don', 'order'],
   };
+
+  // Tạo tập hợp phrases từ message (bigrams + trigrams) để check multi-word synonym keys
+  const msgBigrams  = words.length >= 2 ? words.slice(0,-1).map((w,i) => `${w} ${words[i+1]}`) : [];
+  const msgTrigrams3 = words.length >= 3 ? words.slice(0,-2).map((w,i) => `${w} ${words[i+1]} ${words[i+2]}`) : [];
+  const msgPhrases  = new Set([...msgBigrams, ...msgTrigrams3]);
 
   const expandWithSynonyms = (wordList) => {
     const expanded = new Set(wordList);
+    // (A) Single-word synonym keys
     for (const w of wordList) {
-      if (SYNONYMS[w]) SYNONYMS[w].forEach(s => expanded.add(s));
+      if (SYNONYMS[w]) {
+        for (const syn of SYNONYMS[w]) expanded.add(syn);
+      }
+    }
+    // (B) Multi-word synonym keys — check message bigrams/trigrams
+    for (const phrase of msgPhrases) {
+      if (SYNONYMS[phrase]) {
+        for (const syn of SYNONYMS[phrase]) expanded.add(syn);
+        expanded.add(phrase); // thêm cả phrase gốc vào search
+      }
     }
     return [...expanded];
   };

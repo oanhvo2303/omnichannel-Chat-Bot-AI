@@ -830,8 +830,23 @@ ${knowledgeEntries.join('\n\n')}
 
           const analysis = rawAnalysis; // Giữ toolCalls để xử lý bên dưới
 
-          // Increment AI usage counter
-          await db.run('UPDATE Shops SET ai_messages_used = ai_messages_used + 1 WHERE id = ?', [shop.id]);
+          // ★ ATOMIC QUOTA INCREMENT: UPDATE chỉ thành công khi chưa vượt quota
+          // Thay thế 2-step SELECT check + UPDATE riêng lẻ (dễ race condition khi 2 tin đến cùng lúc)
+          // Nếu ai_quota_limit = 0 → unlimited → WHERE luôn đúng → OK
+          const quotaGuard = shopLicense.ai_quota_limit > 0
+            ? 'AND ai_messages_used < ai_quota_limit'
+            : '';
+          const incrementResult = await db.run(
+            `UPDATE Shops SET ai_messages_used = ai_messages_used + 1 WHERE id = ? ${quotaGuard}`,
+            [shop.id]
+          );
+          if (incrementResult.changes === 0) {
+            // Quota đã bị vượt trong khi xử lý (race condition caught!)
+            console.log(`[AI] ⛔ Shop #${shop.id} quota atomic block: đã vượt giới hạn (race condition caught)`);
+            await callSendAPI(senderId, 'Xin lỗi, hệ thống chatbot tạm thời bận. Nhân viên sẽ hỗ trợ bạn sớm nhất! 🙏', shop.page_access_token);
+            console.log(`[INBOX PIPELINE] ⏱️ Pipeline kết thúc sau ${Date.now() - pipelineStart}ms (QUOTA RACE BLOCK)`);
+            return;
+          }
 
         // ★★★ Xử lý Tool Calls — AI tự tạo đơn hàng + Auto-tagging ★★★
         if (analysis.toolCalls?.length > 0) {

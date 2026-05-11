@@ -33,22 +33,23 @@ function getModelsForKey(apiKey) {
   const agentModel = ai.getGenerativeModel({
     model: 'gemini-2.5-flash',
     tools: ORDER_TOOL_DECLARATIONS,
+    // toolConfig AUTO: model tự quyết định gọi function hay trả text
+    toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
+    // systemInstruction: cơ chế ép JSON đáng tin cậy nhất khi dùng tools
+    // responseSchema + tools cùng lúc có thể bị API ignore → dùng instruction thay thế
+    systemInstruction: {
+      parts: [{
+        text: `QUAN TRỌNG: Khi bạn KHÔNG gọi function tool, BẮT BUỘC trả về JSON thuần túy (không markdown, không backtick) theo đúng format sau:
+{"intent":"HỖ_TRỢ|ĐẶT_HÀNG|ESCALATE|CHÀO_HỎI","reply":"<câu trả lời cho khách>","confidence":<số 0.0-1.0>,"source":"faq|general|escalate"}
+- confidence = 1.0 nếu trả lời dựa trên FAQ trong Kho Kiến Thức
+- confidence = 0.6-0.8 nếu dựa vào thông tin sản phẩm/shop
+- confidence = 0.3-0.5 nếu không có nguồn rõ ràng
+- source = "escalate" nếu bạn không biết câu trả lời và cần nhân viên hỗ trợ`
+      }]
+    },
     generationConfig: {
       temperature: 0.3,
       maxOutputTokens: 2048,
-      // Ép schema JSON khi agentModel chọn trả text thay vì function call
-      // Gemini API không cho phép responseMimeType + tools cùng lúc,
-      // nhưng responseSchema vẫn hoạt động để guide output format
-      responseSchema: {
-        type: 'object',
-        properties: {
-          intent:     { type: 'string', description: 'Phân loại ý định: HỖ_TRỢ | ĐẶT_HÀNG | ESCALATE | CHÀO_HỎI' },
-          reply:      { type: 'string', description: 'Câu trả lời gửi cho khách hàng' },
-          confidence: { type: 'number', description: 'Độ tin cậy 0-1 dựa trên knowledge base' },
-          source:     { type: 'string', description: 'faq | general | escalate' },
-        },
-        required: ['intent', 'reply', 'confidence', 'source'],
-      },
     },
   });
 
