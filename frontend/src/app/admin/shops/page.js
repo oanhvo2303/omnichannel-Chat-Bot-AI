@@ -350,12 +350,33 @@ export default function ShopsManagementPage() {
 
                       {/* Actions */}
                       <td className="px-6 py-4 text-center">
-                        <div className="flex items-center justify-center gap-1.5">
-                          {/* Quota — hiện cho TẤT CẢ kể cả SUPER_ADMIN */}
+                        <div className="flex items-center justify-center gap-1 flex-wrap max-w-[220px]">
+                          {/* Edit Profile */}
+                          <button onClick={() => { setActionShop(t); setActionType("edit"); setEditName(t.shop_name || ""); setEditEmail(t.email || ""); }}
+                            className="px-2 py-1 text-[10px] font-bold rounded-lg bg-zinc-800 text-amber-400 border border-zinc-700 hover:border-amber-500/30 hover:bg-amber-500/10 transition-all"
+                            title="Sửa thông tin">
+                            <Pencil className="w-3 h-3 inline mr-1" />Sửa
+                          </button>
+
+                          {/* Reset Password */}
+                          <button onClick={() => { setActionShop(t); setActionType("reset-pass"); setNewPass(""); }}
+                            className="px-2 py-1 text-[10px] font-bold rounded-lg bg-zinc-800 text-orange-400 border border-zinc-700 hover:border-orange-500/30 hover:bg-orange-500/10 transition-all"
+                            title="Đặt lại mật khẩu">
+                            <KeyRound className="w-3 h-3 inline mr-1" />MK
+                          </button>
+
+                          {/* Quota */}
                           <button onClick={() => { setActionShop(t); setActionType("quota"); setQuotaValue(t.ai_quota_limit || 1000); }}
                             className="px-2 py-1 text-[10px] font-bold rounded-lg bg-zinc-800 text-violet-400 border border-zinc-700 hover:border-violet-500/30 hover:bg-violet-500/10 transition-all"
                             title="Sửa AI Quota">
                             <SlidersHorizontal className="w-3 h-3 inline mr-1" />Quota
+                          </button>
+
+                          {/* Reset quota counter */}
+                          <button onClick={() => { setActionShop(t); setActionType("reset-quota"); }}
+                            className="px-2 py-1 text-[10px] font-bold rounded-lg bg-zinc-800 text-emerald-400 border border-zinc-700 hover:border-emerald-500/30 hover:bg-emerald-500/10 transition-all"
+                            title="Reset bộ đếm AI về 0">
+                            <RefreshCw className="w-3 h-3 inline mr-1" />Reset
                           </button>
 
                           {t.role !== 'SUPER_ADMIN' && (
