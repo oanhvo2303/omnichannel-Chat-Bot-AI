@@ -3,8 +3,9 @@
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
-const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
+const { requireOwnerOrAdmin, requireMarketingPermission } = require('../middlewares/roleMiddleware');
 const { processBroadcast, getRecipients } = require('../services/broadcastService');
+const { writeAudit, getClientIp } = require('../services/auditService');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -43,16 +44,14 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-/** POST /api/broadcasts — Tạo chiến dịch mới */
-router.post('/', requireOwnerOrAdmin, async (req, res) => {
+/** POST /api/broadcasts — Tạo chiến dịch mới (marketing permission) */
+router.post('/', requireMarketingPermission, async (req, res) => {
   try {
     const { name, message, image_url, tag_ids } = req.body;
     if (!name || !message) return res.status(400).json({ error: 'name và message là bắt buộc.' });
 
     const db = getDB();
     const shopId = req.shop.shopId;
-
-    // Preview: đếm recipients
     const recipients = await getRecipients(shopId, tag_ids || []);
 
     const result = await db.run(
@@ -62,32 +61,35 @@ router.post('/', requireOwnerOrAdmin, async (req, res) => {
 
     console.log(`[BROADCAST] Tạo chiến dịch #${result.lastID}: "${name}" → ${recipients.length} recipients`);
 
-    res.status(201).json({
-      id: result.lastID,
-      name, message, image_url,
-      total: recipients.length,
-      status: 'draft',
+    await writeAudit({
+      shopId, actorId: req.shop.staffId, actorRole: req.shop.role,
+      action: 'CREATE_BROADCAST', resource: 'Broadcasts', resourceId: result.lastID,
+      detail: { name, total: recipients.length }, ip: getClientIp(req),
     });
+
+    res.status(201).json({ id: result.lastID, name, message, image_url, total: recipients.length, status: 'draft' });
   } catch (error) {
     console.error('[BROADCAST] Lỗi tạo:', error.message);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
-/** POST /api/broadcasts/:id/send — Bắt đầu gửi (fire-and-forget) */
-router.post('/:id/send', requireOwnerOrAdmin, async (req, res) => {
+/** POST /api/broadcasts/:id/send — Bắt đầu gửi (fire-and-forget, marketing permission) */
+router.post('/:id/send', requireMarketingPermission, async (req, res) => {
   try {
     const db = getDB();
     const broadcast = await db.get('SELECT * FROM Broadcasts WHERE id = ? AND shop_id = ?', [req.params.id, req.shop.shopId]);
-
     if (!broadcast) return res.status(404).json({ error: 'Không tìm thấy chiến dịch.' });
     if (broadcast.status === 'sending') return res.status(400).json({ error: 'Chiến dịch đang gửi.' });
     if (broadcast.status === 'completed') return res.status(400).json({ error: 'Chiến dịch đã hoàn tất.' });
 
-    // Fire-and-forget: chạy ngầm, trả response ngay
-    res.json({ message: 'Đang bắt đầu gửi...', status: 'sending' });
+    await writeAudit({
+      shopId: req.shop.shopId, actorId: req.shop.staffId, actorRole: req.shop.role,
+      action: 'SEND_BROADCAST', resource: 'Broadcasts', resourceId: broadcast.id,
+      detail: { name: broadcast.name, total: broadcast.total }, ip: getClientIp(req),
+    });
 
-    // Run worker in background
+    res.json({ message: 'Đang bắt đầu gửi...', status: 'sending' });
     processBroadcast(broadcast.id).catch((err) => {
       console.error(`[BROADCAST] Worker error #${broadcast.id}:`, err.message);
     });

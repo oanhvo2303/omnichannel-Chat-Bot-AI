@@ -492,6 +492,28 @@ const initSQLite = async () => {
     `);
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_faq_shop ON FAQ(shop_id, is_active);`);
 
+    // =============================================
+    // Bảng AuditLogs (Nhật ký hành động Admin)
+    // Ghi lại mọi thay đổi quan trọng để debug + compliance
+    // =============================================
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS AuditLogs (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        shop_id     INTEGER NOT NULL,
+        actor_id    INTEGER,               -- staffId (null nếu shop owner)
+        actor_role  TEXT,                  -- role tại thời điểm hành động
+        action      TEXT NOT NULL,         -- VD: 'UPDATE_BOT_RULE', 'SEND_BROADCAST', 'DELETE_PRODUCT'
+        resource    TEXT,                  -- VD: 'BotRules', 'Orders', 'Staff'
+        resource_id TEXT,                  -- ID của record bị thay đổi
+        detail      TEXT,                  -- JSON snapshot hoặc mô tả ngắn
+        ip          TEXT,                  -- IP của request
+        created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (shop_id) REFERENCES Shops(id) ON DELETE CASCADE
+      );
+    `);
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_audit_shop ON AuditLogs(shop_id, created_at DESC);`);
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_audit_actor ON AuditLogs(actor_id);`);
+
     console.log('[DATABASE] Cấu trúc bảng đã được đồng bộ.');
 
     dbInstance = db;
