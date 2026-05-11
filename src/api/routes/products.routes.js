@@ -3,6 +3,7 @@
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
+const { writeAudit, getClientIp } = require('../services/auditService');
 const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
 
 const router = express.Router();
@@ -101,6 +102,7 @@ router.post('/', requireOwnerOrAdmin, async (req, res) => {
       [req.shop.shopId, name.trim(), sku || null, basePrice, stockQty, primaryImage, tiers ? JSON.stringify(tiers) : null, description || null, attrsJson, imagesJson]
     );
 
+    writeAudit({ shopId: req.shop.shopId, actorId: req.shop.staffId, actorRole: req.shop.role, action: 'CREATE_PRODUCT', resource: 'Products', resourceId: result.lastID, detail: { name }, ip: getClientIp(req) });
     res.status(201).json({
       id: result.lastID, shop_id: req.shop.shopId,
       name: name.trim(), sku, price: basePrice,
@@ -146,6 +148,7 @@ router.put('/:id', requireOwnerOrAdmin, async (req, res) => {
       'UPDATE Products SET name=?, sku=?, price=?, stock_quantity=?, image_url=?, volume_pricing=?, description=?, attributes=?, images=? WHERE id=? AND shop_id=?',
       [name, sku || null, basePrice, stockQty, primaryImage, tiers ? JSON.stringify(tiers) : null, description || null, attrsJson, imagesJson, req.params.id, req.shop.shopId]
     );
+    writeAudit({ shopId: req.shop.shopId, actorId: req.shop.staffId, actorRole: req.shop.role, action: 'UPDATE_PRODUCT', resource: 'Products', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ message: 'Đã cập nhật.' });
   } catch (error) {
     console.error('[PRODUCTS] Lỗi cập nhật:', error.message);
@@ -158,6 +161,7 @@ router.delete('/:id', requireOwnerOrAdmin, async (req, res) => {
   try {
     const db = getDB();
     await db.run('DELETE FROM Products WHERE id=? AND shop_id=?', [req.params.id, req.shop.shopId]);
+    writeAudit({ shopId: req.shop.shopId, actorId: req.shop.staffId, actorRole: req.shop.role, action: 'DELETE_PRODUCT', resource: 'Products', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ message: 'Đã xóa.' });
   } catch (error) {
     console.error('[PRODUCTS] Lỗi xóa:', error.message);

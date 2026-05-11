@@ -1,8 +1,9 @@
-'use strict';
+﻿'use strict';
 
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
+const { writeAudit, getClientIp } = require('../services/auditService');
 const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
 
 const router = express.Router();
@@ -256,6 +257,7 @@ router.put('/:id', requireOwnerOrAdmin, async (req, res) => {
       [statusVal ?? null, page_name ?? null, req.params.id, req.shop.shopId]
     );
 
+    writeAudit({ shopId: req.shop.shopId, actorId: req.shop.staffId, actorRole: req.shop.role, action: 'UPDATE_PAGE', resource: 'ShopIntegrations', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ message: 'Đã cập nhật.' });
   } catch (error) {
     console.error('[PAGES PUT]', error.message);
@@ -274,6 +276,7 @@ router.delete('/:id', requireOwnerOrAdmin, async (req, res) => {
       'DELETE FROM ShopIntegrations WHERE id = ? AND shop_id = ?',
       [req.params.id, req.shop.shopId]
     );
+    writeAudit({ shopId: req.shop.shopId, actorId: req.shop.staffId, actorRole: req.shop.role, action: 'DISCONNECT_PAGE', resource: 'ShopIntegrations', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ message: 'Đã xóa.' });
   } catch (error) {
     console.error('[PAGES DELETE]', error.message);

@@ -1,8 +1,9 @@
-'use strict';
+﻿'use strict';
 
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
+const { writeAudit, getClientIp } = require('../services/auditService');
 const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
 
 const router = express.Router();
@@ -51,6 +52,7 @@ router.patch('/:id', requireOwnerOrAdmin, async (req, res) => {
       'UPDATE ShopIntegrations SET is_ai_active = ?, ai_system_prompt = ?, status = ?, auto_hide_comments = ?, bot_rules_mode = ?, ai_full_history = ? WHERE id = ? AND shop_id = ?',
       [newIsAiActive, newAiPrompt || '', newStatus, newAutoHide, newBotRulesMode, newFullHistory, id, req.shop.shopId]
     );
+    writeAudit({ shopId: req.shop.shopId, actorId: req.shop.staffId, actorRole: req.shop.role, action: 'UPDATE_INTEGRATION', resource: 'ShopIntegrations', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ success: true, message: 'Đã cập nhật cấu hình kênh tích hợp.' });
   } catch (error) {
     console.error('[INTEGRATIONS] Lỗi PATCH AI Config:', error.message);

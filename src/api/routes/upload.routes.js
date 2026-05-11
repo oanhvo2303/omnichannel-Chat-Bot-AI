@@ -1,10 +1,11 @@
-'use strict';
+﻿'use strict';
 
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { authMiddleware } = require('../middlewares/authMiddleware');
+const { writeAudit, getClientIp } = require('../services/auditService');
 const { getDB } = require('../../infra/database/sqliteConnection');
 
 // Magic byte signatures cho các định dạng được phép
@@ -170,6 +171,7 @@ router.delete('/library/:id', authMiddleware, async (req, res) => {
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
     await db.run('DELETE FROM MediaLibrary WHERE id = ?', [item.id]);
+    writeAudit({ shopId: req.shop.shopId, actorId: req.shop.staffId, actorRole: req.shop.role, action: 'DELETE_MEDIA', resource: 'MediaLibrary', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ success: true });
   } catch (error) {
     console.error('[UPLOAD DELETE] Lỗi:', error.message);

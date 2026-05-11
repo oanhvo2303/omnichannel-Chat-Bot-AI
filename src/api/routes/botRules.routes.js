@@ -1,8 +1,9 @@
-'use strict';
+﻿'use strict';
 
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
+const { writeAudit, getClientIp } = require('../services/auditService');
 const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
 
 const router = express.Router();
@@ -79,6 +80,7 @@ router.post('/', requireOwnerOrAdmin, async (req, res) => {
 
     console.log(`[BOT RULES] Tạo rule #${result.lastID}: "${keywords}" → ${stepsJson ? `${JSON.parse(stepsJson).length} steps` : `type:${response_type || 'text'}`}`);
 
+    writeAudit({ shopId: req.shop.shopId, actorId: req.shop.staffId, actorRole: req.shop.role, action: 'CREATE_BOT_RULE', resource: 'BotRules', resourceId: result.lastID, detail: { keywords }, ip: getClientIp(req) });
     res.status(201).json({
       id: result.lastID,
       keywords,

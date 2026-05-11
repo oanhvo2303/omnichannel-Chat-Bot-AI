@@ -1,8 +1,9 @@
-'use strict';
+﻿'use strict';
 
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
+const { writeAudit, getClientIp } = require('../services/auditService');
 const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
 
 const router = express.Router();
@@ -70,6 +71,7 @@ router.patch('/', requireOwnerOrAdmin, async (req, res) => {
       );
     }
 
+    writeAudit({ shopId: req.shop.shopId, actorId: req.shop.staffId, actorRole: req.shop.role, action: 'UPDATE_AI_SETTINGS', resource: 'AISettings', ip: getClientIp(req) });
     res.json({ success: true, message: 'Đã cập nhật cấu hình AI.' });
   } catch (error) {
     console.error('[AI SETTINGS] Lỗi PATCH:', error.message);
