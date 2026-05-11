@@ -1,6 +1,8 @@
 "use client";
 
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
+import { useSocket } from "@/hooks/useSocket";
+
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { Send, StickyNote, Zap, X, MessageCircle, Reply, Mail, Bot, UserCog, ToggleLeft, ToggleRight, ArrowDown, Clock, EyeOff, Eye, ExternalLink, Image as ImageIcon, AlertTriangle, ShoppingCart } from "lucide-react";
@@ -78,44 +80,27 @@ export default function ChatWindow({
   const [aiError, setAiError] = useState(null);
 
   // ★ Lắng nghe Socket.IO 'ai_error' event để hiển thị banner
-  useEffect(() => {
-    const socket = typeof window !== 'undefined' ? window.__omnichannel_socket : null;
-    if (!socket) return;
-
-    const handleAiError = (data) => {
-      console.error('[ChatWindow] 🚨 AI Error received:', data);
-      setAiError(data);
-      // Tự xóa warning sau 30 giây
-      setTimeout(() => setAiError(null), 30000);
-    };
-
-    socket.on('ai_error', handleAiError);
-    return () => socket.off('ai_error', handleAiError);
+  useSocket('ai_error', (data) => {
+    console.error('[ChatWindow] 🚨 AI Error received:', data);
+    setAiError(data);
+    setTimeout(() => setAiError(null), 30000);
   }, []);
 
   // ★ Lắng nghe Socket.IO 'ai_order_created' — hiển thị system message khi AI tạo đơn
   const [aiOrderMessages, setAiOrderMessages] = useState([]);
-  useEffect(() => {
-    const socket = typeof window !== 'undefined' ? window.__omnichannel_socket : null;
-    if (!socket) return;
-
-    const handleAiOrder = (data) => {
-      console.log('[ChatWindow] 🎉 AI Order Created:', data);
-      if (data.customer_id === selectedCustomer?.id) {
-        setAiOrderMessages(prev => [...prev, {
-          id: `ai-order-${data.order_id}`,
-          type: 'ai_order',
-          order_id: data.order_id,
-          product_name: data.product_name,
-          total_amount: data.total_amount,
-          quantity: data.quantity,
-          timestamp: data.timestamp,
-        }]);
-      }
-    };
-
-    socket.on('ai_order_created', handleAiOrder);
-    return () => socket.off('ai_order_created', handleAiOrder);
+  useSocket('ai_order_created', (data) => {
+    console.log('[ChatWindow] 🎉 AI Order Created:', data);
+    if (data.customer_id === selectedCustomer?.id) {
+      setAiOrderMessages(prev => [...prev, {
+        id: `ai-order-${data.order_id}`,
+        type: 'ai_order',
+        order_id: data.order_id,
+        product_name: data.product_name,
+        total_amount: data.total_amount,
+        quantity: data.quantity,
+        timestamp: data.timestamp,
+      }]);
+    }
   }, [selectedCustomer?.id]);
 
   useEffect(() => { 

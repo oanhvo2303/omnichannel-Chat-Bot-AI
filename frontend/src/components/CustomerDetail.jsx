@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useSocket } from "@/hooks/useSocket";
+
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -75,70 +77,39 @@ export default function CustomerDetail({
     setLastSaved(null);
   }, [customer?.id]);
 
-  // Socket listener for auto-extracted phone
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const handlePhoneExtracted = (data) => {
-      if (data.customer_id === customer?.id && data.phone) {
-        setEditPhone(data.phone);
-        setOrderPhone(data.phone);
-        toast({ title: "📱 Số điện thoại tự động phát hiện!", description: `Regex trích xuất: ${data.phone}` });
-      }
-    };
-
-    // Listen via global socket if available
-    if (window.__omnichannel_socket) {
-      window.__omnichannel_socket.on("customer_phone_extracted", handlePhoneExtracted);
-      return () => window.__omnichannel_socket.off("customer_phone_extracted", handlePhoneExtracted);
+  // ★ Socket: số điện thoại tự động phát hiện
+  useSocket('customer_phone_extracted', (data) => {
+    if (data.customer_id === customer?.id && data.phone) {
+      setEditPhone(data.phone);
+      setOrderPhone(data.phone);
+      toast({ title: '📱 Số điện thoại tự động phát hiện!', description: `Regex trích xuất: ${data.phone}` });
     }
   }, [customer?.id]);
 
-  // ★ Socket listener: AI tự tạo đơn hàng → auto-refresh orders list
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.__omnichannel_socket) return;
-    const socket = window.__omnichannel_socket;
-
-    const handleAiOrder = (data) => {
-      if (data.customer_id === customer?.id) {
-        toast({
-          title: "🤖 AI vừa tạo đơn hàng mới!",
-          description: `Đơn #${data.order_id} — ${data.product_name} x${data.quantity || 1} — ${data.total_amount?.toLocaleString()}đ`,
-        });
-        // Auto reload customer info to update phone/address
-        if (data.customer_id && onCustomerUpdated) {
-          // Trigger parent re-fetch
-          onCustomerUpdated({ ...customer, _refreshOrders: Date.now() });
-        }
-      }
-    };
-
-    socket.on("ai_order_created", handleAiOrder);
-    return () => socket.off("ai_order_created", handleAiOrder);
+  // ★ Socket: AI tự tạo đơn hàng → auto-refresh orders list
+  useSocket('ai_order_created', (data) => {
+    if (data.customer_id === customer?.id) {
+      toast({
+        title: '🤖 AI vừa tạo đơn hàng mới!',
+        description: `Đơn #${data.order_id} — ${data.product_name} x${data.quantity || 1} — ${data.total_amount?.toLocaleString()}đ`,
+      });
+      if (onCustomerUpdated) onCustomerUpdated({ ...customer, _refreshOrders: Date.now() });
+    }
   }, [customer?.id]);
 
-  // ★ Socket listener: AI auto-tag → refresh tags in real-time
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.__omnichannel_socket) return;
-    const socket = window.__omnichannel_socket;
-
-    const handleTagsUpdated = (data) => {
-      if (data.customer_id === customer?.id) {
-        // Refresh tags from parent
-        onTagsRefresh?.(customer.id);
-
-        if (data.source === 'ai_auto') {
-          const tagLabels = (data.tag_names || []).map(t => `[${t}]`).join(' ');
-          toast({
-            title: data.action === 'add' ? "🏷️ AI đã gắn thẻ" : "🏷️ AI đã gỡ thẻ",
-            description: tagLabels,
-            duration: 5000,
-          });
-        }
+  // ★ Socket: AI auto-tag → refresh tags in real-time
+  useSocket('customer_tags_updated', (data) => {
+    if (data.customer_id === customer?.id) {
+      onTagsRefresh?.(customer.id);
+      if (data.source === 'ai_auto') {
+        const tagLabels = (data.tag_names || []).map(t => `[${t}]`).join(' ');
+        toast({
+          title: data.action === 'add' ? '🏷️ AI đã gắn thẻ' : '🏷️ AI đã gỡ thẻ',
+          description: tagLabels,
+          duration: 5000,
+        });
       }
-    };
-
-    socket.on("customer_tags_updated", handleTagsUpdated);
-    return () => socket.off("customer_tags_updated", handleTagsUpdated);
+    }
   }, [customer?.id, onTagsRefresh]);
 
   // Close tag picker on outside click
@@ -214,17 +185,21 @@ export default function CustomerDetail({
   };
 
   const subtotal = orderItems.reduce((sum, item) => sum + getEffectivePrice(item) * item.quantity, 0);
+  const totalQty = orderItems.reduce((sum, item) => sum + item.quantity, 0);
 
-  // Auto shipping fee logic
+  // Auto shipping fee logic (thỏa 1 trong 2 điều kiện = freeship)
   useEffect(() => {
     if (freeshipActive) {
       setShippingFee(0);
-    } else if (subtotal >= shopSettings.free_shipping_threshold && shopSettings.free_shipping_threshold > 0) {
+    } else if (
+      (shopSettings.free_shipping_threshold > 0 && subtotal >= shopSettings.free_shipping_threshold) ||
+      (shopSettings.free_shipping_min_quantity > 0 && totalQty >= shopSettings.free_shipping_min_quantity)
+    ) {
       setShippingFee(0);
     } else {
       setShippingFee(shopSettings.default_shipping_fee || 0);
     }
-  }, [subtotal, freeshipActive, shopSettings]);
+  }, [subtotal, totalQty, freeshipActive, shopSettings]);
 
   // Calculate discount amount
   const calculatedDiscount = discountType === 'PERCENT'
