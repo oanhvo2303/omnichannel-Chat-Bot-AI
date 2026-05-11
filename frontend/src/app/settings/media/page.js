@@ -101,7 +101,7 @@ function UploadZone({ onUploaded }) {
           </div>
           <div className="text-center">
             <p className="text-sm font-semibold text-zinc-700">Kéo & thả hoặc click để upload</p>
-            <p className="text-xs text-zinc-400 mt-0.5">JPG, PNG, GIF, WEBP, MP4 — tối đa 10MB/file</p>
+            <p className="text-xs text-zinc-400 mt-0.5">JPG, PNG, GIF, WEBP, MP4 — tối đa 50MB/file</p>
           </div>
         </>
       )}
@@ -116,11 +116,26 @@ function MediaCard({ item, onDelete }) {
   const [imgError, setImgError] = useState(false);
   const isVideo = item.mimetype?.startsWith('video/');
 
+  // Copy URL với đúng tag format cho AI: [IMG:url] hoặc [VIDEO:url]
   const copyUrl = () => {
-    navigator.clipboard.writeText(item.url).then(() => {
+    const tag = isVideo ? `[VIDEO:${item.url}]` : `[IMG:${item.url}]`;
+    navigator.clipboard.writeText(tag).then(() => {
       setCopied(true);
-      toast({ title: '✅ Đã copy URL', description: 'Dán vào ô câu trả lời FAQ làm link ảnh AI' });
+      toast({
+        title: '✅ Đã copy tag AI',
+        description: isVideo
+          ? 'Dán [VIDEO:url] vào câu trả lời FAQ — bot sẽ gửi video cho khách'
+          : 'Dán [IMG:url] vào câu trả lời FAQ — bot sẽ gửi ảnh cho khách',
+      });
       setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  // Copy plain URL (không kèm tag)
+  const copyPlainUrl = (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(item.url).then(() => {
+      toast({ title: '✅ Đã copy URL thuần', description: item.url.substring(0, 60) + '...' });
     });
   };
 
@@ -148,9 +163,27 @@ function MediaCard({ item, onDelete }) {
       {/* Thumbnail */}
       <div className="relative aspect-square bg-zinc-100 overflow-hidden">
         {isVideo ? (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-zinc-900/5">
-            <Video className="w-10 h-10 text-purple-400" />
-            <span className="text-xs text-zinc-500 font-medium">Video</span>
+          // Video thumbnail — browser renders first frame natively
+          <div className="relative w-full h-full bg-zinc-900">
+            <video
+              src={item.url}
+              className="w-full h-full object-cover opacity-90"
+              muted
+              preload="metadata"
+              playsInline
+            />
+            {/* Play button overlay */}
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center backdrop-blur-sm">
+                <svg className="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z"/>
+                </svg>
+              </div>
+            </div>
+            {/* Video badge */}
+            <div className="absolute top-2 left-2 px-1.5 py-0.5 bg-purple-600/90 rounded text-[9px] text-white font-bold tracking-wide">
+              VIDEO
+            </div>
           </div>
         ) : imgError ? (
           <div className="w-full h-full flex flex-col items-center justify-center gap-2">
@@ -215,11 +248,13 @@ function MediaCard({ item, onDelete }) {
             className={`flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-md transition-all ${
               copied
                 ? 'bg-green-100 text-green-600'
-                : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
+                : isVideo
+                  ? 'bg-purple-50 text-purple-600 hover:bg-purple-100'
+                  : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
             }`}
           >
             {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-            {copied ? 'Copied!' : 'Copy URL'}
+            {copied ? 'Copied!' : isVideo ? '[VIDEO]' : '[IMG]'}
           </button>
         </div>
       </div>
@@ -293,11 +328,15 @@ export default function MediaLibraryPage() {
       {/* Tip box */}
       <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
         <span className="text-lg">💡</span>
-        <div>
-          <p className="text-sm font-semibold text-amber-800">Cách dùng URL ảnh làm kiến thức AI</p>
-          <p className="text-xs text-amber-700 mt-0.5">
-            Upload ảnh → <strong>Copy URL</strong> → Dán vào ô <em>Câu trả lời</em> trong tab FAQ.
-            AI sẽ gửi link ảnh này cho khách khi được hỏi đúng câu hỏi tương ứng.
+        <div className="space-y-1">
+          <p className="text-sm font-semibold text-amber-800">Cách dùng ảnh &amp; video làm kiến thức AI</p>
+          <p className="text-xs text-amber-700">
+            <strong>Ảnh:</strong> Upload → click <kbd className="px-1 bg-blue-100 text-blue-700 rounded text-[10px] font-mono">[IMG]</kbd> → dán vào <em>Câu trả lời</em> FAQ.
+            Bot sẽ gửi ảnh cho khách khi được hỏi đúng câu.
+          </p>
+          <p className="text-xs text-amber-700">
+            <strong>Video:</strong> Upload MP4 → click <kbd className="px-1 bg-purple-100 text-purple-700 rounded text-[10px] font-mono">[VIDEO]</kbd> → dán vào FAQ.
+            Bot sẽ gửi video Messenger cho khách.
           </p>
         </div>
       </div>

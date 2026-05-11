@@ -102,18 +102,49 @@ const sendImageAPI = async (recipientId, imageUrl, pageAccessToken) => {
 };
 
 /**
- * Gửi 1 phần tin nhắn (có thể chứa [IMG:url] tag + text)
+ * Gửi 1 phần tin nhắn (có thể chứa [IMG:url] và/hoặc [VIDEO:url] tags + text)
  */
 const sendMessagePart = async (recipientId, part, pageAccessToken) => {
-  // Tìm tất cả [IMG:url] trong phần này
-  const imgRegex = /\[IMG:(https?:\/\/[^\]]+)\]/g;
-  const imgs = [...part.matchAll(imgRegex)];
-  const textOnly = part.replace(imgRegex, '').trim();
+  // Tìm tất cả [IMG:url] và [VIDEO:url] trong phần này
+  const imgRegex   = /\[IMG:(https?:\/\/[^\]]+)\]/g;
+  const videoRegex = /\[VIDEO:(https?:\/\/[^\]]+)\]/g;
+
+  const imgs   = [...part.matchAll(imgRegex)];
+  const videos = [...part.matchAll(videoRegex)];
+  const textOnly = part.replace(imgRegex, '').replace(videoRegex, '').trim();
 
   // Gửi ảnh trước
   for (const match of imgs) {
     await sendImageAPI(recipientId, match[1], pageAccessToken);
   }
+
+  // Gửi video (Facebook Messenger attachment type=video)
+  for (const match of videos) {
+    const videoUrl = match[1];
+    if (!pageAccessToken) continue;
+    try {
+      const body = {
+        recipient: { id: recipientId },
+        message: {
+          attachment: {
+            type: 'video',
+            payload: { url: videoUrl, is_reusable: true },
+          },
+        },
+      };
+      const resp = await fetch(`https://graph.facebook.com/v21.0/me/messages?access_token=${pageAccessToken}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await resp.json();
+      if (!resp.ok) console.error('[FB SEND] ❌ Lỗi gửi video:', data.error?.message);
+      else console.log(`[FB SEND] 🎬 Video sent → ${recipientId}`);
+    } catch (err) {
+      console.error('[FB SEND] ❌ Network error gửi video:', err.message);
+    }
+  }
+
   // Gửi text sau (nếu có)
   if (textOnly) {
     await callSendAPI(recipientId, textOnly, pageAccessToken);
