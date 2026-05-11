@@ -114,21 +114,41 @@ async function executeAIOrder(args, shopId, customerId) {
       );
 
       let bestScore = 0;
+      let candidates = []; // Fix 4: trọng đất ambiguity
+
       for (const p of allProducts) {
-        const pName = p.name.toLowerCase().replace(/[^a-záàảãạăắặằẵẳâấậầẫẩđéèẻẽẹêếệềễểíìỉĩịóòỏõọôốộồỗổơớợờỡởúùủũụưứựừữửýỳỷỹỵ0-9\s]/g, '');
-        // Tính số keyword của AI có trong tên sản phẩm
-        const score = keywords.filter(kw => pName.includes(kw)).length;
-        // Bonus: tên SP chứa nguyên chuỗi tên AI yêu cầu
-        const fullBonus = pName.includes(product_name.toLowerCase()) ? 5 : 0;
+        const pNameNorm = p.name.toLowerCase()
+          .normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd');
+        const score = keywords.filter(kw => pNameNorm.includes(kw)).length;
+        const fullBonus = pNameNorm.includes(
+          product_name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd')
+        ) ? 5 : 0;
         const total = score + fullBonus;
         if (total > bestScore) {
           bestScore = total;
+          candidates = [p]; // reset
           product = p;
+        } else if (total === bestScore && total > 0) {
+          candidates.push(p); // same score → thêm vào ambiguity pool
         }
       }
 
       // Nếu score = 0 → không có SP nào match
-      if (bestScore === 0) product = null;
+      if (bestScore === 0) { product = null; candidates = []; }
+
+      // Fix 4: ambiguity check — 2+ SP cùng score, tên khác nhau
+      if (candidates.length > 1) {
+        const uniqueNames = [...new Set(candidates.map(p => p.name))];
+        if (uniqueNames.length > 1) {
+          const nameList = uniqueNames.slice(0, 4).map((n, i) => `${i + 1}. ${n}`).join('\n');
+          console.log(`[ORDER EXECUTOR] ❓ Ambiguous match cho "${product_name}": ${uniqueNames.join(' / ')}`);
+          return {
+            success: false,
+            error: 'ambiguous_product',
+            message: `Bạn muốn đặt sản phẩm nào trong số sau? Ảnh bác cho mình biết số tương ứng nhé ❤️\n${nameList}`,
+          };
+        }
+      }
 
       if (product) {
         console.log(`[ORDER EXECUTOR] 📊 Scored match: "${product.name}" (score=${bestScore}/${keywords.length}) cho yêu cầu "${product_name}"`);

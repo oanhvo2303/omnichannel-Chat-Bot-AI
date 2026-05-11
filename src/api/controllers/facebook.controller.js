@@ -626,11 +626,19 @@ async function processInboxMessage(pageId, senderId, messageText, imageData = nu
         const shopLicense = await db.get('SELECT license_status, ai_quota_limit, ai_messages_used, gemini_api_key FROM Shops WHERE id = ?', [shop.id]);
         if (shopLicense && shopLicense.license_status !== 'ACTIVE' && shopLicense.license_status !== 'TRIAL') {
           console.log(`[AI] ⛔ Shop #${shop.id} license=${shopLicense.license_status} — AI disabled`);
-          replyText = 'Xin lỗi, hệ thống chatbot tạm thời không khả dụng. Vui lòng liên hệ chủ shop.';
+          // Fix 1: gửi ngay cho khách, không chờ nhánh quota-OK bên dưới
+          const errMsg = 'Xin lỗi, hệ thống chatbot tạm thời không khả dụng. Vui lòng liên hệ chủ shop.';
+          await callSendAPI(senderId, errMsg, shop.page_access_token);
+          console.log(`[INBOX PIPELINE] ⏱️ Pipeline kết thúc sau ${Date.now() - pipelineStart}ms (LICENSE BLOCKED)`);
+          return;
         } else if (shopLicense && shopLicense.ai_quota_limit > 0 && shopLicense.ai_messages_used >= shopLicense.ai_quota_limit) {
           // Quota limit > 0 = có giới hạn. Nếu <= 0 = unlimited, skip check.
           console.log(`[AI] ⛔ Shop #${shop.id} quota exceeded: ${shopLicense.ai_messages_used}/${shopLicense.ai_quota_limit}`);
-          replyText = 'Xin lỗi, hệ thống chatbot tạm thời bận. Nhân viên sẽ hỗ trợ bạn sớm nhất!';
+          // Fix 1: gửi ngay + chuyển nhân viên
+          const quotaMsg = 'Xin lỗi, hệ thống chatbot tạm thời bận. Nhân viên sẽ hỗ trợ bạn sớm nhất! 🙏';
+          await callSendAPI(senderId, quotaMsg, shop.page_access_token);
+          console.log(`[INBOX PIPELINE] ⏱️ Pipeline kết thúc sau ${Date.now() - pipelineStart}ms (QUOTA EXCEEDED)`);
+          return;
         } else {
           // ═══ KNOWLEDGE BASE: Inject Bot Rules vào AI prompt (nếu mode=knowledge) ═══
           let knowledgeBase = '';

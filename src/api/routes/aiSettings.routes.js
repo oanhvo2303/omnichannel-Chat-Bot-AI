@@ -1,13 +1,52 @@
 'use strict';
 
 const express = require('express');
+const crypto = require('crypto');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
 const { writeAudit, getClientIp } = require('../services/auditService');
 const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
 
-const router = express.Router();
+// ─── API Key Encryption at-rest (AES-256-GCM) ─────────────────────────────
+// ENCRYPTION_KEY phải là 64 hex ký tự (32 bytes). Set trong .env hoặc PM2 env.
+const ENC_KEY_HEX = process.env.ENCRYPTION_KEY || '';
+const CAN_ENCRYPT = ENC_KEY_HEX.length === 64;
+if (!CAN_ENCRYPT) {
+  console.warn('[AI SETTINGS] ⚠️ ENCRYPTION_KEY chưa set → API key sẽ lưu plaintext (không an toàn cho production!)');
+}
 
+function encryptKey(plaintext) {
+  if (!CAN_ENCRYPT || !plaintext) return plaintext;
+  const iv = crypto.randomBytes(12);
+  const encKey = Buffer.from(ENC_KEY_HEX, 'hex');
+  const cipher = crypto.createCipheriv('aes-256-gcm', encKey, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  // Format: enc:iv_hex:tag_hex:ciphertext_hex
+  return `enc:${iv.toString('hex')}:${tag.toString('hex')}:${encrypted.toString('hex')}`;
+}
+
+function decryptKey(stored) {
+  if (!stored) return null;
+  if (!stored.startsWith('enc:')) return stored; // legacy plaintext
+  if (!CAN_ENCRYPT) {
+    console.error('[AI SETTINGS] ❌ ENCRYPTION_KEY chưa set, không decrypt được key!');
+    return null;
+  }
+  try {
+    const [, ivHex, tagHex, ctHex] = stored.split(':');
+    const encKey = Buffer.from(ENC_KEY_HEX, 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', encKey, Buffer.from(ivHex, 'hex'));
+    decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+    return decipher.update(Buffer.from(ctHex, 'hex')) + decipher.final('utf8');
+  } catch (e) {
+    console.error('[AI SETTINGS] ❌ Decrypt API key thất bại:', e.message);
+    return null;
+  }
+}
+// ───────────────────────────────────────────────────────────────────────────
+
+const router = express.Router();
 router.use(authMiddleware);
 
 /**
@@ -57,11 +96,13 @@ router.patch('/', requireOwnerOrAdmin, async (req, res) => {
 
     // Nếu key là '••••' (masked) → không cập nhật, giữ nguyên
     if (gemini_api_key && !gemini_api_key.includes('••')) {
+      // Fix 3: encrypt at-rest trước khi lưu
+      const toStore = encryptKey(gemini_api_key.trim());
       await db.run(
         'UPDATE Shops SET gemini_api_key = ? WHERE id = ?',
-        [gemini_api_key.trim(), req.shop.shopId]
+        [toStore, req.shop.shopId]
       );
-      console.log(`[AI SETTINGS] Shop #${req.shop.shopId} đã cập nhật Gemini API Key.`);
+      console.log(`[AI SETTINGS] Shop #${req.shop.shopId} đã cập nhật Gemini API Key (${CAN_ENCRYPT ? 'encrypted' : 'plaintext'}).`);
     }
 
     if (ai_quota_limit !== undefined) {
@@ -94,11 +135,12 @@ router.post('/test', requireOwnerOrAdmin, async (req, res) => {
     const db = getDB();
     const { gemini_api_key } = req.body;
 
-    // Nếu không truyền key mới → dùng key trong DB
+    // Nếu không truyền key mới → dùng key trong DB (cần decrypt)
     let keyToTest = gemini_api_key;
     if (!keyToTest || keyToTest.includes('••')) {
       const shop = await db.get('SELECT gemini_api_key FROM Shops WHERE id = ?', [req.shop.shopId]);
-      keyToTest = shop?.gemini_api_key;
+      // Fix 3: decrypt nếu đang encrypted
+      keyToTest = decryptKey(shop?.gemini_api_key);
     }
 
     if (!keyToTest) {
@@ -142,18 +184,13 @@ router.post('/test', requireOwnerOrAdmin, async (req, res) => {
 
 /**
  * POST /api/settings/ai/reset-quota
- * Reset AI usage counter về 0.
+ * Fix 2: KHÔNG cho tenant tự reset quota — đây là hành động billing.
+ * Để tránh break frontend cũ, trả 403 rõ ràng thay vì 404.
  */
-router.post('/reset-quota', requireOwnerOrAdmin, async (req, res) => {
-  try {
-    const db = getDB();
-    await db.run('UPDATE Shops SET ai_messages_used = 0 WHERE id = ?', [req.shop.shopId]);
-    console.log(`[AI SETTINGS] Shop #${req.shop.shopId} đã reset AI quota.`);
-    res.json({ success: true, message: 'Đã reset bộ đếm AI.' });
-  } catch (error) {
-    console.error('[AI SETTINGS] Lỗi reset quota:', error.message);
-    res.status(500).json({ error: 'Lỗi reset quota.' });
-  }
+router.post('/reset-quota', requireOwnerOrAdmin, (_req, res) => {
+  return res.status(403).json({
+    error: 'Reset quota là thao tác billing. Vui lòng liên hệ admin để điều chỉnh.',
+  });
 });
 
 module.exports = router;
