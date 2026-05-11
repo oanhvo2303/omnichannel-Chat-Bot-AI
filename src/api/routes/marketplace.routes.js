@@ -17,7 +17,9 @@ const router = express.Router();
 // sig   = hmac-sha256(shopId + ":" + nonce, OAUTH_STATE_SECRET)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const STATE_SECRET = process.env.OAUTH_STATE_SECRET || process.env.JWT_SECRET || 'changeme';
+const config = require('../../config');
+// FIX: Dùng config.jwt.secret (đã bắt buộc) — loại bỏ fallback 'changeme' nguy hiểm
+const STATE_SECRET = process.env.OAUTH_STATE_SECRET || config.jwt.secret;
 
 function signOAuthState(shopId) {
   const nonce = crypto.randomBytes(16).toString('hex');

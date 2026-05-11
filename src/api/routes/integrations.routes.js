@@ -3,6 +3,7 @@
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
+const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
 
 const router = express.Router();
 
@@ -16,7 +17,7 @@ router.get('/', async (req, res) => {
   try {
     const db = getDB();
     const integrations = await db.all(
-      'SELECT id, platform, page_name, page_id, status, metadata, connected_at, is_ai_active, ai_system_prompt, auto_hide_comments FROM ShopIntegrations WHERE shop_id = ?',
+      'SELECT id, platform, page_name, page_id, status, metadata, connected_at, is_ai_active, ai_system_prompt, auto_hide_comments, bot_rules_mode, ai_full_history FROM ShopIntegrations WHERE shop_id = ?',
       [req.shop.shopId]
     );
     res.json({ integrations });
@@ -30,23 +31,25 @@ router.get('/', async (req, res) => {
  * PATCH /api/integrations/:id
  * Cập nhật cấu hình AI (bật/tắt, prompt) hoặc trạng thái status (connected/disconnected)
  */
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', requireOwnerOrAdmin, async (req, res) => {
   try {
     const db = getDB();
     const { id } = req.params;
-    const { is_ai_active, ai_system_prompt, status, auto_hide_comments } = req.body;
+    const { is_ai_active, ai_system_prompt, status, auto_hide_comments, bot_rules_mode, ai_full_history } = req.body;
     
-    const integration = await db.get('SELECT id, is_ai_active, ai_system_prompt, status, auto_hide_comments FROM ShopIntegrations WHERE id = ? AND shop_id = ?', [id, req.shop.shopId]);
-    if (!integration) return res.status(404).json({ error: 'Kênh tích hợp không tồn tại.' });
+    const integration = await db.get('SELECT id, is_ai_active, ai_system_prompt, status, auto_hide_comments, bot_rules_mode, ai_full_history FROM ShopIntegrations WHERE id = ? AND shop_id = ?', [id, req.shop.shopId]);
+    if (!integration) return res.status(404).json({ error: 'Kênnh tích hợp không tồn tại.' });
 
     const newIsAiActive = is_ai_active !== undefined ? (is_ai_active ? 1 : 0) : integration.is_ai_active;
     const newAiPrompt = ai_system_prompt !== undefined ? ai_system_prompt : integration.ai_system_prompt;
     const newStatus = status !== undefined ? status : integration.status;
     const newAutoHide = auto_hide_comments !== undefined ? auto_hide_comments : integration.auto_hide_comments;
+    const newBotRulesMode = bot_rules_mode !== undefined ? bot_rules_mode : (integration.bot_rules_mode || 'keyword');
+    const newFullHistory = ai_full_history !== undefined ? (ai_full_history ? 1 : 0) : (integration.ai_full_history || 0);
 
     await db.run(
-      'UPDATE ShopIntegrations SET is_ai_active = ?, ai_system_prompt = ?, status = ?, auto_hide_comments = ? WHERE id = ? AND shop_id = ?',
-      [newIsAiActive, newAiPrompt || '', newStatus, newAutoHide, id, req.shop.shopId]
+      'UPDATE ShopIntegrations SET is_ai_active = ?, ai_system_prompt = ?, status = ?, auto_hide_comments = ?, bot_rules_mode = ?, ai_full_history = ? WHERE id = ? AND shop_id = ?',
+      [newIsAiActive, newAiPrompt || '', newStatus, newAutoHide, newBotRulesMode, newFullHistory, id, req.shop.shopId]
     );
     res.json({ success: true, message: 'Đã cập nhật cấu hình kênh tích hợp.' });
   } catch (error) {
@@ -59,7 +62,7 @@ router.patch('/:id', async (req, res) => {
  * DELETE /api/integrations/:platform
  * Ngắt kết nối một kênh (xóa token khỏi DB).
  */
-router.delete('/:platform', async (req, res) => {
+router.delete('/:platform', requireOwnerOrAdmin, async (req, res) => {
   try {
     const db = getDB();
     const { platform } = req.params;
@@ -94,7 +97,7 @@ router.delete('/:platform', async (req, res) => {
  * POST /api/integrations/shipping
  * Lưu Token + Cấu hình Vận Chuyển GHTK/GHN/VTP
  */
-router.post('/shipping', async (req, res) => {
+router.post('/shipping', requireOwnerOrAdmin, async (req, res) => {
   try {
     const db = getDB();
     const shopId = req.shop.shopId;

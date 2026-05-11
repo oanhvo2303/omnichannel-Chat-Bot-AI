@@ -53,10 +53,16 @@ router.post('/', async (req, res) => {
     const db = getDB();
     const shopId = req.shop.shopId;
 
-    // Resolve items — với validation chặt chẽ
+    // FIX #3: Verify customer thuộc shop TRƯỚC khi insert
+    const customer = await db.get(
+      'SELECT id FROM Customers WHERE id = ? AND shop_id = ?',
+      [customer_id, shopId]
+    );
+    if (!customer) return res.status(404).json({ error: 'Khách hàng không tồn tại hoặc không thuộc shop này.' });
+
+    // Resolve items — validate + lấy giá từ DB (không tin giá client)
     const resolvedItems = [];
     for (const item of items) {
-      // FIX: Validate quantity và price trước khi xử lý
       const qty = parseInt(item.quantity);
       if (!Number.isInteger(qty) || qty <= 0) {
         return res.status(400).json({ error: `Mặt hàng "${item.name || '#' + item.product_id}": số lượng phải là số nguyên dương.` });
@@ -68,9 +74,9 @@ router.post('/', async (req, res) => {
         if (product.stock_quantity < qty) {
           return res.status(400).json({ error: `"${product.name}" chỉ còn ${product.stock_quantity} sản phẩm.` });
         }
+        // FIX: Luôn dùng giá từ DB — không cho phép client ghi đè giá sản phẩm
         resolvedItems.push({ product_id: product.id, name: product.name, quantity: qty, price: product.price });
       } else {
-        // Custom item (không có mã sản phẩm)
         const customPrice = Number(item.price);
         if (!Number.isFinite(customPrice) || customPrice < 0) {
           return res.status(400).json({ error: `Mặt hàng "${item.name}": giá phải là số không âm.` });
@@ -83,7 +89,6 @@ router.post('/', async (req, res) => {
     const subtotal = resolvedItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
     const finalShippingFee = Math.max(0, parseInt(shipping_fee) || 0);
 
-    // Discount: FIXED (VNĐ) hoặc PERCENT (%)
     const dType = discount_type === 'PERCENT' ? 'PERCENT' : 'FIXED';
     const rawDiscount = Math.max(0, parseFloat(discount_amount) || 0);
     let calculatedDiscount = 0;
@@ -96,22 +101,31 @@ router.post('/', async (req, res) => {
     if (calculatedDiscount > subtotal + finalShippingFee) {
       return res.status(400).json({ error: 'Số tiền giảm giá không hợp lệ (lớn hơn tổng đơn).' });
     }
-
-    // ★ total = subtotal + shipping - discount
     const totalAmount = subtotal + finalShippingFee - calculatedDiscount;
 
-    const orderResult = await db.run(
-      `INSERT INTO Orders (shop_id, customer_id, total_amount, subtotal, shipping_fee, discount_amount, discount_type, note, created_by_id, recipient_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [shopId, customer_id, totalAmount, subtotal, finalShippingFee, calculatedDiscount, dType, note || null, req.shop.staffId || null, recipient_name || null]
-    );
-    const orderId = orderResult.lastID;
+    // FIX: Wrap toàn bộ INSERT order + items + stock deduct trong 1 transaction
+    await db.run('BEGIN TRANSACTION');
+    let orderId;
+    try {
+      const orderResult = await db.run(
+        `INSERT INTO Orders (shop_id, customer_id, total_amount, subtotal, shipping_fee, discount_amount, discount_type, note, created_by_id, recipient_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [shopId, customer_id, totalAmount, subtotal, finalShippingFee, calculatedDiscount, dType, note || null, req.shop.staffId || null, recipient_name || null]
+      );
+      orderId = orderResult.lastID;
 
-    for (const item of resolvedItems) {
-      await db.run('INSERT INTO OrderItems (order_id, product_id, name, quantity, price) VALUES (?, ?, ?, ?, ?)',
-        [orderId, item.product_id || null, item.name, item.quantity, item.price]);
-      if (item.product_id) {
-        await db.run('UPDATE Products SET stock_quantity = stock_quantity - ? WHERE id = ?', [item.quantity, item.product_id]);
+      for (const item of resolvedItems) {
+        await db.run(
+          'INSERT INTO OrderItems (order_id, product_id, name, quantity, price) VALUES (?, ?, ?, ?, ?)',
+          [orderId, item.product_id || null, item.name, item.quantity, item.price]
+        );
+        if (item.product_id) {
+          await db.run('UPDATE Products SET stock_quantity = stock_quantity - ? WHERE id = ?', [item.quantity, item.product_id]);
+        }
       }
+      await db.run('COMMIT');
+    } catch (txErr) {
+      await db.run('ROLLBACK');
+      throw txErr;
     }
 
     if (customer_phone || customer_address) {
@@ -325,78 +339,92 @@ router.patch('/:id', async (req, res) => {
       }
     }
 
-    // Update items if provided (replace strategy) + recalculate pricing
+    // Update items if provided — validate TRƯỚC, rồi mới mutation
     if (items && Array.isArray(items) && items.length > 0) {
-      // Restore old stock
+      // ★ BƯỚC 1: Load old items (cần trước validate để tính stockAfterReturn)
       const oldItems = await db.all('SELECT * FROM OrderItems WHERE order_id = ?', [orderId]);
-      for (const oi of oldItems) {
-        if (oi.product_id) {
-          await db.run('UPDATE Products SET stock_quantity = stock_quantity + ? WHERE id = ? AND shop_id = ?', [oi.quantity, oi.product_id, shopId]);
-        }
-      }
-      await db.run('DELETE FROM OrderItems WHERE order_id = ?', [orderId]);
 
-      // FIX: Validate đầu vào từng mặt hàng trước khi thực hiện bất kỳ thay đổi DB nào
+      // ★ BƯỚC 2: Validate tất cả items MỚI trước khi đụng DB
+      const resolvedEditItems = [];
       for (const item of items) {
         const qty = parseInt(item.quantity);
         if (!Number.isInteger(qty) || qty <= 0) {
           return res.status(400).json({ error: `Mặt hàng "${item.name || '#' + item.product_id}": số lượng phải là số nguyên dương.` });
         }
         if (item.product_id) {
-          const product = await db.get('SELECT id, name, stock_quantity FROM Products WHERE id = ? AND shop_id = ?', [item.product_id, shopId]);
+          const product = await db.get(
+            'SELECT id, name, price, stock_quantity FROM Products WHERE id = ? AND shop_id = ?',
+            [item.product_id, shopId]
+          );
           if (!product) return res.status(400).json({ error: `Sản phẩm #${item.product_id} không tồn tại.` });
-          // Tính tồn kho tạm thời (sau khi hoàn lại các mặt hàng cũ)
           const oldItem = oldItems.find(oi => oi.product_id === item.product_id);
           const stockAfterReturn = product.stock_quantity + (oldItem?.quantity || 0);
           if (stockAfterReturn < qty) {
             return res.status(400).json({ error: `"${product.name}" chỉ còn ${stockAfterReturn} sản phẩm sau khi hoàn kho.` });
           }
-        } else if (item.price !== undefined) {
+          // FIX #2: Lấy giá từ DB — không dùng item.price từ client cho product items
+          resolvedEditItems.push({ product_id: product.id, name: product.name, quantity: qty, price: product.price });
+        } else {
           const customPrice = Number(item.price);
           if (!Number.isFinite(customPrice) || customPrice < 0) {
             return res.status(400).json({ error: `Mặt hàng "${item.name}": giá phải là số không âm.` });
           }
+          resolvedEditItems.push({ product_id: null, name: item.name, quantity: qty, price: customPrice });
         }
       }
 
-      // FIX: Dùng transaction để đảm bảo atomic (insert item + trừ kho không bị tách rời)
+      // ★ BƯỚC 3: Sau khi validate xong, mới bắt đầu mutation trong 1 transaction
       await db.run('BEGIN TRANSACTION');
       try {
-      // Insert new items + deduct stock
-      let recalcSubtotal = 0;
-      for (const item of items) {
-        const qty = parseInt(item.quantity);
-        await db.run(
-          'INSERT INTO OrderItems (order_id, product_id, name, quantity, price) VALUES (?, ?, ?, ?, ?)',
-          [orderId, item.product_id || null, item.name, qty, item.price || 0]
-        );
-        recalcSubtotal += (item.price || 0) * qty;
-        if (item.product_id) {
-          await db.run('UPDATE Products SET stock_quantity = stock_quantity - ? WHERE id = ? AND shop_id = ?', [qty, item.product_id, shopId]);
+        // 3a. Hoàn kho cũ
+        for (const oi of oldItems) {
+          if (oi.product_id) {
+            await db.run(
+              'UPDATE Products SET stock_quantity = stock_quantity + ? WHERE id = ? AND shop_id = ?',
+              [oi.quantity, oi.product_id, shopId]
+            );
+          }
         }
-      }
-      await db.run('COMMIT');
+        // 3b. Xóa OrderItems cũ
+        await db.run('DELETE FROM OrderItems WHERE order_id = ?', [orderId]);
+
+        // 3c. Insert items mới + trừ kho
+        let recalcSubtotal = 0;
+        for (const item of resolvedEditItems) {
+          await db.run(
+            'INSERT INTO OrderItems (order_id, product_id, name, quantity, price) VALUES (?, ?, ?, ?, ?)',
+            [orderId, item.product_id || null, item.name, item.quantity, item.price]
+          );
+          recalcSubtotal += item.price * item.quantity;
+          if (item.product_id) {
+            await db.run(
+              'UPDATE Products SET stock_quantity = stock_quantity - ? WHERE id = ? AND shop_id = ?',
+              [item.quantity, item.product_id, shopId]
+            );
+          }
+        }
+
+        // 3d. Recalculate pricing
+        const newShippingFee = shipping_fee !== undefined ? Math.max(0, parseInt(shipping_fee) || 0) : (order.shipping_fee || 0);
+        const dType = discount_type || order.discount_type || 'FIXED';
+        const rawDiscount = discount_amount !== undefined ? Math.max(0, parseFloat(discount_amount) || 0) : (order.discount_amount || 0);
+        let calculatedDiscount = 0;
+        if (dType === 'PERCENT') {
+          calculatedDiscount = Math.round(recalcSubtotal * Math.min(rawDiscount, 100) / 100);
+        } else {
+          calculatedDiscount = Math.min(Math.round(rawDiscount), recalcSubtotal + newShippingFee);
+        }
+        const finalTotal = recalcSubtotal + newShippingFee - calculatedDiscount;
+
+        await db.run(
+          'UPDATE Orders SET total_amount = ?, subtotal = ?, shipping_fee = ?, discount_amount = ?, discount_type = ? WHERE id = ? AND shop_id = ?',
+          [finalTotal, recalcSubtotal, newShippingFee, calculatedDiscount, dType, orderId, shopId]
+        );
+        await db.run('COMMIT');
       } catch (txErr) {
         await db.run('ROLLBACK');
         throw txErr;
       }
-
-      // ★ Recalculate: total = subtotal + shipping - discount
-      const newShippingFee = shipping_fee !== undefined ? Math.max(0, parseInt(shipping_fee) || 0) : (order.shipping_fee || 0);
-      const dType = discount_type || order.discount_type || 'FIXED';
-      const rawDiscount = discount_amount !== undefined ? Math.max(0, parseFloat(discount_amount) || 0) : (order.discount_amount || 0);
-      let calculatedDiscount = 0;
-      if (dType === 'PERCENT') {
-        calculatedDiscount = Math.round(recalcSubtotal * Math.min(rawDiscount, 100) / 100);
-      } else {
-        calculatedDiscount = Math.min(Math.round(rawDiscount), recalcSubtotal + newShippingFee);
-      }
-      const finalTotal = recalcSubtotal + newShippingFee - calculatedDiscount;
-
-      await db.run(
-        'UPDATE Orders SET total_amount = ?, subtotal = ?, shipping_fee = ?, discount_amount = ?, discount_type = ? WHERE id = ? AND shop_id = ?',
-        [finalTotal, recalcSubtotal, newShippingFee, calculatedDiscount, dType, orderId, shopId]
-      );
     } else if (discount_amount !== undefined || shipping_fee !== undefined || discount_type !== undefined) {
       // Update pricing without changing items
       const currentSubtotal = order.subtotal || order.total_amount || 0;

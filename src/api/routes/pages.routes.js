@@ -3,6 +3,7 @@
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
+const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -34,7 +35,7 @@ router.get('/', async (req, res) => {
  * FIX: Ghi vào ShopIntegrations (nguồn sự thật duy nhất),
  * thay vì Pages table cũ. Webhook và GET đều đọc ShopIntegrations.
  */
-router.post('/', async (req, res) => {
+router.post('/', requireOwnerOrAdmin, async (req, res) => {
   try {
     const { page_id, page_name, page_access_token, platform } = req.body;
 
@@ -90,7 +91,7 @@ router.post('/', async (req, res) => {
  * PUT /api/pages/:id — Toggle active / đổi tên
  * Cập nhật trên ShopIntegrations (NOT Pages table)
  */
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireOwnerOrAdmin, async (req, res) => {
   try {
     const { is_active, page_name } = req.body;
     const db = getDB();
@@ -119,7 +120,7 @@ router.put('/:id', async (req, res) => {
  * DELETE /api/pages/:id — Xóa Fanpage
  * Xóa từ ShopIntegrations (NOT Pages table)
  */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireOwnerOrAdmin, async (req, res) => {
   try {
     const db = getDB();
     await db.run(

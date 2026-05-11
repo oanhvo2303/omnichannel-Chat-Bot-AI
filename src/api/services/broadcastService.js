@@ -32,14 +32,15 @@ async function getRecipients(shopId, tagIds) {
 
   if (!tagIds || tagIds.length === 0) {
     return db.all(
-      'SELECT id, platform_id, platform, name FROM Customers WHERE shop_id = ? AND platform_id IS NOT NULL',
+      // FIX: Thêm page_id để resolvePageToken biết gửi qua page nào
+      'SELECT id, platform_id, platform, name, page_id FROM Customers WHERE shop_id = ? AND platform_id IS NOT NULL',
       [shopId]
     );
   }
 
   const placeholders = tagIds.map(() => '?').join(',');
   return db.all(`
-    SELECT DISTINCT c.id, c.platform_id, c.platform, c.name
+    SELECT DISTINCT c.id, c.platform_id, c.platform, c.name, c.page_id
     FROM Customers c
     INNER JOIN CustomerTags ct ON c.id = ct.customer_id
     WHERE c.shop_id = ? AND ct.tag_id IN (${placeholders}) AND c.platform_id IS NOT NULL
@@ -96,11 +97,12 @@ async function getPageTokenMap(shopId) {
  * @returns {string|null}
  */
 function resolvePageToken(pageTokenMap, recipient) {
-  // Nếu customer có gắn page_id cụ thể
-  if (recipient.platform_page_id && pageTokenMap.has(String(recipient.platform_page_id))) {
-    return pageTokenMap.get(String(recipient.platform_page_id));
+  // FIX: Dùng page_id (từ Customers.page_id) thay vì platform_page_id (không tồn tại)
+  const pageId = recipient.page_id || recipient.platform_page_id;
+  if (pageId && pageTokenMap.has(String(pageId))) {
+    return pageTokenMap.get(String(pageId));
   }
-  // Fallback: lấy token đầu tiên trong map
+  // Fallback: lấy token đầu tiên nếu customer chưa gắn page_id
   if (pageTokenMap.size > 0) {
     return pageTokenMap.values().next().value;
   }
@@ -277,4 +279,4 @@ async function processBroadcast(broadcastId) {
   );
 }
 
-module.exports = { processBroadcast, getRecipients };
+module.exports = { processBroadcast, getRecipients, getPageTokenMap, resolvePageToken };

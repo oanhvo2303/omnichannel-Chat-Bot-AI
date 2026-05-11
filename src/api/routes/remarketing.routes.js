@@ -51,22 +51,11 @@ router.post('/send', async (req, res) => {
       return res.status(400).json({ error: 'Không tìm thấy khách hàng nào thỏa mãn điều kiện.' });
     }
 
-    // FIX: Lấy page token từ ShopIntegrations (multi-page) với fallback legacy
-    let pageToken = null;
-    const integrationRows = await db.all(
-      `SELECT access_token FROM ShopIntegrations
-       WHERE shop_id = ? AND platform LIKE 'facebook_%' AND status = 'connected' AND access_token IS NOT NULL
-       LIMIT 1`,
-      [shopId]
-    );
-    if (integrationRows.length > 0) {
-      pageToken = integrationRows[0].access_token;
-    } else {
-      const shopRow = await db.get('SELECT page_access_token FROM Shops WHERE id = ?', [shopId]);
-      pageToken = shopRow?.page_access_token || null;
-    }
+    // FIX: Dùng pageTokenMap thay vì LIMIT 1 — gửi đúng token cho đúng page
+    const { getPageTokenMap, resolvePageToken } = require('../services/broadcastService');
+    const pageTokenMap = await getPageTokenMap(shopId);
 
-    if (!pageToken) {
+    if (pageTokenMap.size === 0) {
       return res.status(400).json({ error: 'Chưa kết nối Facebook Fanpage. Vui lòng vào Kết nối Đa kênh.' });
     }
 
@@ -102,7 +91,14 @@ router.post('/send', async (req, res) => {
         const personalizedMsg = message.replace(/\{\{name\}\}/gi, r.name || 'bạn');
 
         try {
-          // Gọi Facebook Send API
+          // FIX: Lấy token đúng theo page của từng khách
+          const pageToken = resolvePageToken(pageTokenMap, r);
+          if (!pageToken) {
+            failed++;
+            console.log(`[REMARKETING] ⚠️ ${r.name || r.platform_id}: không tìm thấy token cho page ${r.page_id}`);
+            continue;
+          }
+
           const payload = {
             recipient: { id: r.platform_id },
             message: { text: personalizedMsg },
@@ -118,7 +114,6 @@ router.post('/send', async (req, res) => {
 
           if (fbRes.ok) {
             sent++;
-            // Nếu có ảnh đính kèm, gửi thêm
             if (image_url) {
               await fetch(`https://graph.facebook.com/v21.0/me/messages?access_token=${pageToken}`, {
                 method: 'POST',
