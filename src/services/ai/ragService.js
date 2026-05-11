@@ -61,18 +61,55 @@ async function retrieveFAQ(shopId, messageText, integrationId = null) {
     return []; // Không có keyword → không inject FAQ (tránh hallucinate ngẫu nhiên)
   }
 
-  // Score từng FAQ dựa trên số keyword match (cả normalized)
+  // ─── Trigram Jaccard similarity (cải thiện RAG với paraphrasing/typo) ───
+  // Ví dụ: "giá ship" và "phí vận chuyển" → trigram overlap tốt hơn exact match
+  const getTrigrams = (str) => {
+    const s = `  ${str}  `; // padding
+    const set = new Set();
+    for (let i = 0; i < s.length - 2; i++) set.add(s.slice(i, i + 3));
+    return set;
+  };
+  const jaccardSim = (setA, setB) => {
+    if (setA.size === 0 || setB.size === 0) return 0;
+    let intersection = 0;
+    for (const t of setA) { if (setB.has(t)) intersection++; }
+    return intersection / (setA.size + setB.size - intersection);
+  };
+
+  // Synonym expansion cho thương mại Việt Nam thường gặp
+  const SYNONYMS = {
+    'ship': ['giao hang', 'van chuyen', 'phi giao'],
+    'giao': ['ship', 'van chuyen', 'mang den'],
+    'gia': ['bao nhieu', 'cost', 'phi', 'tien'],
+    'mua': ['dat hang', 'chot', 'order'],
+    'tra hang': ['hoan hang', 'doi tra', 'bao hanh'],
+    'thanh toan': ['chuyen khoan', 'tra tien', 'payment'],
+  };
+
+  const expandWithSynonyms = (wordList) => {
+    const expanded = new Set(wordList);
+    for (const w of wordList) {
+      if (SYNONYMS[w]) SYNONYMS[w].forEach(s => expanded.add(s));
+    }
+    return [...expanded];
+  };
+
+  const expandedWords = expandWithSynonyms(words);
+  const msgTrigrams = getTrigrams(normalizedMsg);
+
+  // Score từng FAQ dựa trên keyword hit + bigram phrase bonus + trigram similarity
   const scored = allFaqs.map(faq => {
     const raw = (faq.question + ' ' + faq.answer + ' ' + (faq.category || '')).toLowerCase();
-    const searchText = normalizeVN(raw); // P2a: normalize FAQ text
+    const searchText = normalizeVN(raw);
     let hits = 0;
     let exactPhraseBonus = 0;
 
-    for (const word of words) {
+    // Keyword match (với synonym expansion)
+    for (const word of expandedWords) {
       if (searchText.includes(word)) hits++;
     }
 
-    // Bonus nếu phrase 2+ words khớp liên tiếp
+    // Bigram phrase bonus (2 từ liên tiếp khớp → ưu tiên cao)
     if (words.length >= 2) {
       const bigrams = words.slice(0, -1).map((w, i) => `${w} ${words[i + 1]}`);
       for (const bigram of bigrams) {
@@ -90,17 +127,20 @@ async function retrieveFAQ(shopId, messageText, integrationId = null) {
       } catch {}
     }
 
-    const score = words.length > 0
-      ? (hits / words.length) + exactPhraseBonus
-      : 0;
+    // Trigram Jaccard similarity (paraphrasing / typo tolerance)
+    const faqTrigrams = getTrigrams(searchText);
+    const trigramScore = jaccardSim(msgTrigrams, faqTrigrams);
+
+    // Hybrid score: 60% keyword ratio + 40% trigram similarity + phrase bonus
+    const keywordRatio = expandedWords.length > 0 ? hits / expandedWords.length : 0;
+    const score = (keywordRatio * 0.6) + (trigramScore * 0.4) + exactPhraseBonus;
 
     return { ...faq, score };
   });
 
-  // Fix Issue 2: min-score threshold = 0.25 (tránh inject FAQ nhiễu khi chỉ khớp 1 keyword nhỏ)
-  // Ví dụ: 5 từ khóa, hit 1 → score=0.2 → bị lọc; hit 2+ → score≥0.4 → pass
-  const MIN_FAQ_SCORE = 0.25;
-  const MAX_FAQ_RESULTS = 5; // Giới hạn top-5 (tập trung, ít noise hơn top-10)
+  // min-score threshold: 0.20 (đủ rộng để trigram similarity đóng góp khi keyword miss)
+  const MIN_FAQ_SCORE = 0.20;
+  const MAX_FAQ_RESULTS = 5;
 
   return scored
     .filter(f => f.score >= MIN_FAQ_SCORE)

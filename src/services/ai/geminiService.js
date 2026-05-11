@@ -36,6 +36,19 @@ function getModelsForKey(apiKey) {
     generationConfig: {
       temperature: 0.3,
       maxOutputTokens: 2048,
+      // Ép schema JSON khi agentModel chọn trả text thay vì function call
+      // Gemini API không cho phép responseMimeType + tools cùng lúc,
+      // nhưng responseSchema vẫn hoạt động để guide output format
+      responseSchema: {
+        type: 'object',
+        properties: {
+          intent:     { type: 'string', description: 'Phân loại ý định: HỖ_TRỢ | ĐẶT_HÀNG | ESCALATE | CHÀO_HỎI' },
+          reply:      { type: 'string', description: 'Câu trả lời gửi cho khách hàng' },
+          confidence: { type: 'number', description: 'Độ tin cậy 0-1 dựa trên knowledge base' },
+          source:     { type: 'string', description: 'faq | general | escalate' },
+        },
+        required: ['intent', 'reply', 'confidence', 'source'],
+      },
     },
   });
 
@@ -631,29 +644,28 @@ CHÚ Ý VỀ PHONG CÁCH TIN NHẮN:
         console.log(`[GEMINI AGENTIC] 💬 Text response sau ${elapsed}ms: "${textResponse?.substring(0, 100)}..."`);
         console.log('─'.repeat(60));
 
-        // Fix Issue 1: agentModel không có responseMimeType:json → text response là natural language
-        // KHÔNG dùng heuristic regex parse (dễ sai khi reply có dấu {})
-        // Chỉ parse JSON nếu response bắt đầu bằng '{' (strict signal)
+        // v2: agentModel giờ có responseSchema → output luôn là JSON khi không gọi function
+        // Luôn parse JSON trước, fallback natural text chỉ khi parse fail (edge case)
         let intent = 'HỖ_TRỢ'; // default cho text response từ agentic model
         let reply = textResponse;
         let confidence = 0.5; // Fix: unknown — agentModel không có JSON schema, không thể giả định tự tin
         let source = 'general';
 
         const trimmed = textResponse?.trim() || '';
-        if (trimmed.startsWith('{')) {
-          // Chỉ parse khi response thực sự là JSON object
-          try {
-            const parsed = JSON.parse(trimmed);
-            if (parsed.intent) intent = parsed.intent;
-            if (parsed.reply) reply = parsed.reply;
-            if (typeof parsed.confidence === 'number') confidence = parsed.confidence;
-            if (parsed.source) source = parsed.source;
-          } catch {
-            // Parse fail → dùng raw text (an toàn hơn là lấy sai data)
-            reply = textResponse;
-            confidence = 0.4; // Parse fail → còn ít tin hơn
-            console.warn('[GEMINI AGENTIC] JSON parse fail trên response bắt đầu bằng "{" → dùng raw text, conf=0.4');
-          }
+        try {
+          // responseSchema đảm bảo output là JSON → parse trực tiếp (không cần startsWith check)
+          const parsed = JSON.parse(trimmed);
+          if (parsed.intent)                         intent = parsed.intent;
+          if (parsed.reply)                          reply = parsed.reply;
+          if (typeof parsed.confidence === 'number') confidence = Math.min(1, Math.max(0, parsed.confidence));
+          if (parsed.source)                         source = parsed.source;
+          console.log(`[GEMINI AGENTIC] ✅ Schema JSON parsed: intent=${intent}, conf=${confidence.toFixed(2)}, source=${source}`);
+        } catch {
+          // Schema fail hoặc model trả natural text (edge case) → dùng raw text, conf rất thấp
+          // → sẽ trigger escalation guard nếu noFaqMatch
+          reply = textResponse;
+          confidence = 0.3;
+          console.warn('[GEMINI AGENTIC] ⚠️ responseSchema parse fail → natural text fallback, conf=0.3');
         }
 
         return { intent, reply, confidence, source, toolCalls: [] };

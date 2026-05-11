@@ -31,12 +31,29 @@ const bootstrap = async () => {
   const httpServer = http.createServer(app);
 
   // Khởi tạo Socket.IO với CORS cho Frontend
+  // CORS_ORIGIN env var cho phép config linh hoạt theo môi trường
+  const allowedOrigins = process.env.CORS_ORIGIN
+    ? process.env.CORS_ORIGIN.split(',').map(o => o.trim())
+    : [
+        'http://localhost:3002',
+        'http://127.0.0.1:3002',
+        'http://pgquangngai.io.vn',
+        'https://pgquangngai.io.vn',
+        'http://www.pgquangngai.io.vn',
+        'https://www.pgquangngai.io.vn',
+      ];
+
+  console.log(`[SOCKET] Allowed CORS origins: ${allowedOrigins.join(', ')}`);
+
   const io = new Server(httpServer, {
     cors: {
-      origin: ['http://localhost:3002', 'http://127.0.0.1:3002'],
+      origin: allowedOrigins,
       methods: ['GET', 'POST'],
       credentials: true,
     },
+    // Tăng pingTimeout để tránh disconnect giả trên production (slow network)
+    pingTimeout: 60000,
+    pingInterval: 25000,
   });
 
   // Lưu instance io vào singleton để controller dùng
