@@ -3,6 +3,7 @@
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
+const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
 const { sendCapiEvent } = require('../../services/facebookCapiService');
 const crypto = require('crypto');
 
@@ -25,8 +26,8 @@ router.get('/shop-settings', async (req, res) => {
   }
 });
 
-/** PATCH /api/orders/shop-settings — Cập nhật cấu hình phí ship */
-router.patch('/shop-settings', async (req, res) => {
+/** PATCH /api/orders/shop-settings — Cập nhật cấu hình phí ship (chỉ owner/admin) */
+router.patch('/shop-settings', requireOwnerOrAdmin, async (req, res) => {
   try {
     const db = getDB();
     const { default_shipping_fee, free_shipping_threshold, free_shipping_min_quantity } = req.body;
@@ -119,7 +120,16 @@ router.post('/', async (req, res) => {
           [orderId, item.product_id || null, item.name, item.quantity, item.price]
         );
         if (item.product_id) {
-          await db.run('UPDATE Products SET stock_quantity = stock_quantity - ? WHERE id = ?', [item.quantity, item.product_id]);
+          // FIX: Atomic stock deduct — chống oversell race condition
+          // Nếu stock_quantity < qty, affected rows = 0 → rollback
+          const result = await db.run(
+            'UPDATE Products SET stock_quantity = stock_quantity - ? WHERE id = ? AND stock_quantity >= ?',
+            [item.quantity, item.product_id, item.quantity]
+          );
+          if (result.changes === 0) {
+            await db.run('ROLLBACK');
+            return res.status(409).json({ error: `"${item.name}" vừa hết hàng trong khi xử lý. Vui lòng thử lại.` });
+          }
         }
       }
       await db.run('COMMIT');
@@ -388,7 +398,7 @@ router.patch('/:id', async (req, res) => {
         // 3b. Xóa OrderItems cũ
         await db.run('DELETE FROM OrderItems WHERE order_id = ?', [orderId]);
 
-        // 3c. Insert items mới + trừ kho
+        // 3c. Insert items mới + trừ kho (atomic — chống race condition)
         let recalcSubtotal = 0;
         for (const item of resolvedEditItems) {
           await db.run(
@@ -397,10 +407,14 @@ router.patch('/:id', async (req, res) => {
           );
           recalcSubtotal += item.price * item.quantity;
           if (item.product_id) {
-            await db.run(
-              'UPDATE Products SET stock_quantity = stock_quantity - ? WHERE id = ? AND shop_id = ?',
-              [item.quantity, item.product_id, shopId]
+            const result = await db.run(
+              'UPDATE Products SET stock_quantity = stock_quantity - ? WHERE id = ? AND shop_id = ? AND stock_quantity >= ?',
+              [item.quantity, item.product_id, shopId, item.quantity]
             );
+            if (result.changes === 0) {
+              await db.run('ROLLBACK');
+              return res.status(409).json({ error: `"${item.name}" vừa hết hàng trong khi xử lý. Vui lòng thử lại.` });
+            }
           }
         }
 

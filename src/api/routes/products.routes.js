@@ -3,6 +3,7 @@
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
+const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -66,7 +67,7 @@ router.get('/', async (req, res) => {
 });
 
 /** POST /api/products — Thêm sản phẩm */
-router.post('/', async (req, res) => {
+router.post('/', requireOwnerOrAdmin, async (req, res) => {
   try {
     const { name, sku, price, stock_quantity, image_url, volume_pricing, description, attributes, images } = req.body;
     if (!name) return res.status(400).json({ error: 'Tên sản phẩm là bắt buộc.' });
@@ -116,7 +117,7 @@ router.post('/', async (req, res) => {
 });
 
 /** PUT /api/products/:id — Cập nhật sản phẩm */
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireOwnerOrAdmin, async (req, res) => {
   try {
     const { name, sku, price, stock_quantity, image_url, volume_pricing, description, attributes, images } = req.body;
     // FIX: Reject giá = 0 hoặc âm khi update
@@ -153,7 +154,7 @@ router.put('/:id', async (req, res) => {
 });
 
 /** DELETE /api/products/:id — Xóa sản phẩm */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireOwnerOrAdmin, async (req, res) => {
   try {
     const db = getDB();
     await db.run('DELETE FROM Products WHERE id=? AND shop_id=?', [req.params.id, req.shop.shopId]);

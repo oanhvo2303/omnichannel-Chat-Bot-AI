@@ -7,6 +7,35 @@ const fs = require('fs');
 const { authMiddleware } = require('../middlewares/authMiddleware');
 const { getDB } = require('../../infra/database/sqliteConnection');
 
+// Magic byte signatures cho các định dạng được phép
+const MAGIC_BYTES = {
+  'image/jpeg':       { offset: 0, bytes: [0xFF, 0xD8, 0xFF] },
+  'image/png':        { offset: 0, bytes: [0x89, 0x50, 0x4E, 0x47] },
+  'image/gif':        { offset: 0, bytes: [0x47, 0x49, 0x46, 0x38] },
+  'image/webp':       { offset: 8, bytes: [0x57, 0x45, 0x42, 0x50] },
+  'video/mp4':        { offset: 4, bytes: [0x66, 0x74, 0x79, 0x70] }, // ftyp box
+  'video/webm':       { offset: 0, bytes: [0x1A, 0x45, 0xDF, 0xA3] },
+  'video/quicktime':  { offset: 4, bytes: [0x66, 0x74, 0x79, 0x70] }, // ftyp
+  'video/x-msvideo':  { offset: 0, bytes: [0x52, 0x49, 0x46, 0x46] }, // RIFF
+};
+
+/**
+ * Đọc magic bytes của file đã lưu — trả về false nếu không khớp mimetype.
+ */
+function checkMagicBytes(filePath, mimetype) {
+  const rule = MAGIC_BYTES[mimetype];
+  if (!rule) return false; // Không có rule = không cho phép
+  try {
+    const buf = Buffer.alloc(rule.offset + rule.bytes.length);
+    const fd = fs.openSync(filePath, 'r');
+    fs.readSync(fd, buf, 0, buf.length, 0);
+    fs.closeSync(fd);
+    return rule.bytes.every((b, i) => buf[rule.offset + i] === b);
+  } catch {
+    return false;
+  }
+}
+
 const router = express.Router();
 
 // Thư mục lưu media
@@ -69,6 +98,12 @@ router.post('/', authMiddleware, upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'Không nhận được file.' });
     }
 
+    // FIX: Kiểm tra magic bytes thực tế của file sau khi lưu
+    const filePath = req.file.path;
+    if (!checkMagicBytes(filePath, req.file.mimetype)) {
+      fs.unlinkSync(filePath); // Xóa file giả mạo
+      return res.status(400).json({ error: 'File không hợp lệ: nội dung không khớp định dạng.' });
+    }
     const siteUrl = getSiteUrl(req);
     const publicUrl = `${siteUrl}/uploads/bot_media/${req.file.filename}`;
     const isVideo = ALLOWED_VIDEO_TYPES.includes(req.file.mimetype);

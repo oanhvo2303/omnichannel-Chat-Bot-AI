@@ -27,7 +27,10 @@ const registerStaff = async (req, res) => {
 
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(password, salt);
-    const staffRole = (role === 'admin' && userRole === 'owner') ? 'admin' : 'staff';
+    // FIX: req.shop.role có thể là 'owner' (staff login) HOẶC 'SHOP_OWNER'/'SUPER_ADMIN' (shop login)
+    // Cả hai đều được phép tạo admin
+    const isOwnerLevel = ['owner', 'SHOP_OWNER', 'SUPER_ADMIN'].includes(userRole);
+    const staffRole = (role === 'admin' && isOwnerLevel) ? 'admin' : 'staff';
 
     const result = await db.run(
       'INSERT INTO Staff (shop_id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)',

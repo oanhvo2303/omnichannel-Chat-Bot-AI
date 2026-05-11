@@ -3,6 +3,7 @@
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
+const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
 const { processBroadcast, getRecipients } = require('../services/broadcastService');
 
 const router = express.Router();
@@ -43,7 +44,7 @@ router.get('/:id', async (req, res) => {
 });
 
 /** POST /api/broadcasts — Tạo chiến dịch mới */
-router.post('/', async (req, res) => {
+router.post('/', requireOwnerOrAdmin, async (req, res) => {
   try {
     const { name, message, image_url, tag_ids } = req.body;
     if (!name || !message) return res.status(400).json({ error: 'name và message là bắt buộc.' });
@@ -74,7 +75,7 @@ router.post('/', async (req, res) => {
 });
 
 /** POST /api/broadcasts/:id/send — Bắt đầu gửi (fire-and-forget) */
-router.post('/:id/send', async (req, res) => {
+router.post('/:id/send', requireOwnerOrAdmin, async (req, res) => {
   try {
     const db = getDB();
     const broadcast = await db.get('SELECT * FROM Broadcasts WHERE id = ? AND shop_id = ?', [req.params.id, req.shop.shopId]);
@@ -96,7 +97,7 @@ router.post('/:id/send', async (req, res) => {
 });
 
 /** DELETE /api/broadcasts/:id — Xóa chiến dịch */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireOwnerOrAdmin, async (req, res) => {
   try {
     const db = getDB();
     await db.run('DELETE FROM Broadcasts WHERE id = ? AND shop_id = ?', [req.params.id, req.shop.shopId]);
