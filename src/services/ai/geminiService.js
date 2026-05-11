@@ -629,10 +629,20 @@ CHÚ Ý VỀ PHONG CÁCH TIN NHẮN:
         console.log(`[GEMINI AGENTIC] ✅ Final response sau ${totalElapsed}ms: "${finalText?.substring(0, 100)}..."`);
         console.log('─'.repeat(60));
 
+        // Fix: responseSchema cũng áp dụng cho responseStep2 (sau functionResponse)
+        // → finalText có thể là JSON → parse để lấy reply thật, không gửi JSON thô cho khách
         const orderSuccess = toolCalls.some(t => t.name === 'create_system_order' && t.result?.success);
+        let finalReply = finalText;
+        try {
+          const parsed = JSON.parse((finalText || '').trim());
+          if (parsed.reply) finalReply = parsed.reply;
+        } catch {
+          // finalText là natural text → dùng trực tiếp (không có schema cho turn này)
+        }
+
         return {
           intent: orderSuccess ? 'ĐẶT_HÀNG' : 'HỖ_TRỢ',
-          reply: finalText,
+          reply: finalReply,
           toolCalls,
         };
 

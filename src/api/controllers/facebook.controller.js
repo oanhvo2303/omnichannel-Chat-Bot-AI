@@ -546,6 +546,7 @@ async function processInboxMessage(pageId, senderId, messageText, imageData = nu
     }
 
     let replyText, replyIntent;
+    let billSentAsReply = false; // Guard: nếu đã gửi hóa đơn thì skip replyText ở cuối pipeline
 
     if (matchedRule) {
       // ★ Keyword match: trả lời ngay, không gọi Gemini
@@ -858,6 +859,7 @@ ${knowledgeEntries.join('\n\n')}
                   // 1. Gửi qua Messenger
                   await callSendAPI(senderId, call.result.billTemplate, shop.page_access_token);
                   console.log(`[AI TRACE] 🧾 Đã gửi mẫu hóa đơn Đơn #${call.result.orderId} cho khách qua Messenger`);
+                  billSentAsReply = true; // ← đánh dấu đã gửi, skip replyText cuối pipeline
 
                   // 2. Lưu vào DB để hiện trong chat dashboard
                   const billResult = await db.run(
@@ -1017,21 +1019,37 @@ ${knowledgeEntries.join('\n\n')}
 
         console.log(`[AI TRACE] ✅ AI trả lời thành công: Intent=${replyIntent} | Reply="${replyText?.substring(0, 60)}..."`);
         
-        // ★★★ TÁCH AI RESPONSE THÀNH NHIỀU TIN NHẮN GỬI TUẦN TỰ ★★★
-        const messageParts = splitAIResponse(replyText);
-        
-        for (let i = 0; i < messageParts.length; i++) {
-          const part = messageParts[i];
-          if (i > 0) {
-            // Typing indicator + delay giữa các tin
-            await sendTypingOn(senderId, shop.page_access_token);
-            const typingDelay = Math.min(Math.max(part.length * 30, 800), 3000);
-            await new Promise(r => setTimeout(r, typingDelay));
+        // Guard 1: billTemplate đã gửi → skip replyText để tránh gửi 2 tin xác nhận đơn cho khách
+        if (billSentAsReply) {
+          console.log('[AI TRACE] ℹ️ billSentAsReply=true → skip Messenger send. Vẫn lưu DB để Sale xem.');
+          // fall through → lưu DB + emit Socket bên dưới nhưng KHÔNG gửi Messenger thêm lần nữa
+        } else {
+          // Guard 2 (defensive): replyText vẫn là JSON thô khi schema leak qua edge case → extract .reply
+          let textToSend = replyText;
+          try {
+            const maybeJson = JSON.parse((replyText || '').trim());
+            if (maybeJson?.reply && typeof maybeJson.reply === 'string') {
+              textToSend = maybeJson.reply;
+              console.warn('[AI TRACE] ⚠️ replyText là JSON thô → đã extract .reply để gửi cho khách');
+            }
+          } catch { /* không phải JSON → giữ nguyên */ }
+
+          // ★★★ TÁCH AI RESPONSE THÀNH NHIỀU TIN NHẮN GỬI TUẦN TỰ ★★★
+          const messageParts = splitAIResponse(textToSend);
+
+          for (let i = 0; i < messageParts.length; i++) {
+            const part = messageParts[i];
+            if (i > 0) {
+              // Typing indicator + delay giữa các tin
+              await sendTypingOn(senderId, shop.page_access_token);
+              const typingDelay = Math.min(Math.max(part.length * 30, 800), 3000);
+              await new Promise(r => setTimeout(r, typingDelay));
+            }
+            // Bug 3 fix: dùng sendMessagePart thay callSendAPI → hỗ trợ [IMG:url] → attachment ảnh FB
+            await sendMessagePart(senderId, part, shop.page_access_token);
           }
-          // Bug 3 fix: dùng sendMessagePart thay callSendAPI → hỗ trợ [IMG:url] → attachment ảnh FB
-          await sendMessagePart(senderId, part, shop.page_access_token);
+          console.log(`[AI TRACE] 📨 Đã gửi ${messageParts.length} tin nhắn riêng biệt`);
         }
-        console.log(`[AI TRACE] 📨 Đã gửi ${messageParts.length} tin nhắn riêng biệt`);
 
         } // end else (AI quota OK)
       } else {
