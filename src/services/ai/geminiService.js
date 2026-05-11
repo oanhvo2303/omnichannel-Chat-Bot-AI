@@ -555,7 +555,15 @@ CHÚ Ý VỀ PHONG CÁCH TIN NHẮN:
         messageParts = agenticPrompt;
       }
 
-      const result = await chatSession.sendMessage(messageParts);
+      // Timeout guard: nếu Gemini treo/rate-limit → reject sau 25s thay vì treo mãi
+      const withTimeout = (promise, ms) => Promise.race([
+        promise,
+        new Promise((_, rej) =>
+          setTimeout(() => rej(Object.assign(new Error(`Gemini timeout after ${ms}ms`), { code: 'GEMINI_TIMEOUT' })), ms)
+        ),
+      ]);
+
+      const result = await withTimeout(chatSession.sendMessage(messageParts), 25000);
       const response = result.response;
       const elapsed = Date.now() - startTime;
 
@@ -599,9 +607,9 @@ CHÚ Ý VỀ PHONG CÁCH TIN NHẮN:
           });
         }
 
-        // ★ Step 3: Feed tất cả kết quả về Gemini 1 lần → câu trả lời tự nhiên
+        // Step 3: Feed tất cả kết quả về Gemini 1 lần → câu trả lời tự nhiên (cũng có timeout)
         console.log(`[GEMINI AGENTIC] 📤 Gửi ${functionResponses.length} functionResponse(s) về Gemini...`);
-        const responseStep2 = await chatSession.sendMessage(functionResponses);
+        const responseStep2 = await withTimeout(chatSession.sendMessage(functionResponses), 25000);
 
         const finalText = responseStep2.response.text();
         const totalElapsed = Date.now() - startTime;

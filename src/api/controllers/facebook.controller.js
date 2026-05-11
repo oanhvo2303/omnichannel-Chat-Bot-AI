@@ -857,30 +857,48 @@ ${knowledgeEntries.join('\n\n')}
           }
         }
 
-        // ★★★ BUG FIX CRITICAL: Khi AI LỖI → KHÔNG gửi tin cho khách ★★★
+        // Fix 2: Gửi fallback tự nhiên — KHÔNG để khách thấy "đang gõ" rồi im lặng
         if (replyIntent === 'LỖI' || !replyText) {
           console.error('═'.repeat(60));
-          console.error(`[AI TRACE] 🚨🚨🚨 AI LỖI — KHÔNG GỬI TIN CHO KHÁCH 🚨🚨🚨`);
+          console.error(`[AI TRACE] ❌ AI LỖI → GỬI FALLBACK CHO KHÁCH`);
           console.error(`[AI TRACE] ErrorCode: ${analysis.errorCode || 'UNKNOWN'}`);
           console.error(`[AI TRACE] ErrorMessage: ${analysis.errorMessage || 'N/A'}`);
           console.error(`[AI TRACE] Shop #${shop.id} | Khách #${customer.id} (${customer.name})`);
           console.error('═'.repeat(60));
 
-          // ★ Emit lỗi lên Dashboard để Shop Owner biết mà xử lý
+          // Chọn fallback theo loại lỗi
+          const errCode = analysis.errorCode || '';
+          const errMsg  = (analysis.errorMessage || '').toLowerCase();
+          const isTimeout = errCode === 'GEMINI_TIMEOUT' || errMsg.includes('timeout');
+          const isQuota   = errCode === 'QUOTA_EXCEEDED'  || errMsg.includes('quota') || errMsg.includes('429');
+          const fallbackMsg = isTimeout
+            ? 'Dạ hệ thống đang xử lý hơi chậm, anh/chị nhắn lại sau vài giây nhé! Xin lỗi vì sự bất tiện này 🙏'
+            : isQuota
+            ? 'Xin lỗi, chatbot đang bận — nhân viên sẽ hỗ trợ bạn ngay! Để lại SĐT để được gọi lại nhanh nhất nhé 📞'
+            : 'Dạ em chưa hiểu rõ câu hỏi của bạn, anh/chị có thể nhắn lại hoặc để lại SĐT để nhân viên liên hệ nhé! 😊';
+
+          try {
+            await callSendAPI(senderId, fallbackMsg, shop.page_access_token);
+            console.log(`[AI TRACE] ✅ Đã gửi fallback: "${fallbackMsg.substring(0, 60)}..."`);
+          } catch (sendErr) {
+            console.error('[AI TRACE] ❌ Không gửi được fallback:', sendErr.message);
+          }
+
+          // Emit lỗi lên Dashboard để owner biết mà xử lý
           if (io) {
             io.to(String(shop.id)).emit('ai_error', {
               customer_id: customer.id,
               customer_name: customer.name || `Khách #${senderId.slice(-4)}`,
-              error_code: analysis.errorCode || 'UNKNOWN',
+              error_code: errCode || 'UNKNOWN',
               error_message: analysis.errorMessage || 'AI gặp lỗi không xác định.',
               original_message: messageText.substring(0, 200),
               timestamp: new Date().toISOString(),
             });
-            console.log(`[AI TRACE] 📡 Đã emit 'ai_error' event lên Dashboard (Room: Shop #${shop.id})`);
+            console.log(`[AI TRACE] 📡 Đã emit 'ai_error' lên Dashboard (Room: Shop #${shop.id})`);
           }
 
-          console.log(`[INBOX PIPELINE] ⏱️ Pipeline kết thúc sau ${Date.now() - pipelineStart}ms (AI ERROR — không gửi FB)`);
-          return; // DỪNG — không gửi tin cho khách, không lưu bot message
+          console.log(`[INBOX PIPELINE] ⏱️ Pipeline kết thúc sau ${Date.now() - pipelineStart}ms (AI ERROR → fallback sent)`);
+          return;
         }
 
         console.log(`[AI TRACE] ✅ AI trả lời thành công: Intent=${replyIntent} | Reply="${replyText?.substring(0, 60)}..."`);
