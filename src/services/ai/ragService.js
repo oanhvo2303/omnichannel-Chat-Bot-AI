@@ -158,11 +158,11 @@ Bạn PHẢI tuân theo các quy tắc sau khi trả lời:
 function parseRAGResponse(rawResponse) {
   // rawResponse có thể là object từ agenticAnalyzeMessage
   if (typeof rawResponse === 'object' && rawResponse !== null) {
-    // Bug 2 fix: null confidence = AI không trả về → dùng heuristic 0.7
-    // number confidence = AI trả về thật → dùng giá trị thật
+    // Bug 2 fix: null confidence = AI không trả về → dùng heuristic 0.5 (conservative)
+    // Bug 6 fix: giảm từ 0.7 xuống 0.5 — gần ngưỡng escalation 0.55 → buộc AI phải có confidence rõ ràng
     const confidence = typeof rawResponse.confidence === 'number'
       ? rawResponse.confidence
-      : 0.7; // heuristic fallback
+      : 0.5; // conservative fallback
 
     return {
       intent:     rawResponse.intent     || 'KHÁC',
@@ -182,7 +182,7 @@ function parseRAGResponse(rawResponse) {
       return {
         intent:     parsed.intent     || 'KHÁC',
         reply:      parsed.reply      || rawResponse,
-        confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.7,
+        confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.5, // Bug 6 fix
         source:     parsed.source     || 'general',
         toolCalls:  [],
         errorCode:  null,
@@ -191,7 +191,7 @@ function parseRAGResponse(rawResponse) {
   } catch {}
 
   // Fallback
-  return { intent: 'KHÁC', reply: rawResponse, confidence: 0.7, source: 'general', toolCalls: [], errorCode: null };
+  return { intent: 'KHÁC', reply: rawResponse, confidence: 0.5, source: 'general', toolCalls: [], errorCode: null };
 }
 
 // ─── 5. Escalation logic ──────────────────────────────────────────

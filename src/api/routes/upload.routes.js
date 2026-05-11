@@ -1,10 +1,11 @@
-﻿'use strict';
+'use strict';
 
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { authMiddleware } = require('../middlewares/authMiddleware');
+const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware'); // Bug 5b
 const { writeAudit, getClientIp } = require('../services/auditService');
 const { getDB } = require('../../infra/database/sqliteConnection');
 
@@ -155,9 +156,10 @@ router.get('/library', authMiddleware, async (req, res) => {
 });
 
 // =============================================
-// DELETE /api/upload/library/:id — Xóa file khỏi thư viện
+// DELETE /api/upload/library/:id — Xóa file khỏi thư viện (owner/admin only)
 // =============================================
-router.delete('/library/:id', authMiddleware, async (req, res) => {
+// Bug 5b fix: thêm requireOwnerOrAdmin — staff không được xóa media của shop
+router.delete('/library/:id', authMiddleware, requireOwnerOrAdmin, async (req, res) => {
   try {
     const db = getDB();
     const item = await db.get(

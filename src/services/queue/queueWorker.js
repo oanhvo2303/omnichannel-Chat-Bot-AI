@@ -83,7 +83,8 @@ async function failJob(db, job, errMsg) {
 /* ─── Broadcast processor ────────────────────────────────────── */
 async function processBroadcastJob(payload) {
   const { broadcastId } = payload;
-  const { processBroadcast } = require('../broadcast/broadcastProcessor');
+  // Bug 1b fix: correct path → broadcastService (không phải broadcastProcessor)
+  const { processBroadcast } = require('../../api/services/broadcastService');
   await processBroadcast(broadcastId);
 }
 
@@ -143,9 +144,9 @@ async function processRemarketingJob(payload) {
       console.warn(`[QUEUE/REMARKETING] send err:`, e.message);
     }
 
-    // Emit progress
+    // Emit progress — Bug 2 fix: dùng String(shopId) khớp với server.js socket.join()
     if (io) {
-      io.to(`shop_${shopId}`).emit('remarketing_progress', {
+      io.to(String(shopId)).emit('remarketing_progress', {
         campaignId, sent, failed, total: recipients.length,
         current: i + 1, percent: Math.round(((i + 1) / recipients.length) * 100),
       });

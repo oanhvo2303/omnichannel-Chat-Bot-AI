@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
@@ -90,10 +90,12 @@ router.post('/:id/send', requireMarketingPermission, async (req, res) => {
       detail: { name: broadcast.name, total: broadcast.total }, ip: getClientIp(req),
     });
 
-    res.json({ message: 'Đang bắt đầu gửi...', status: 'sending' });
-    processBroadcast(broadcast.id).catch((err) => {
-      console.error(`[BROADCAST] Worker error #${broadcast.id}:`, err.message);
-    });
+    // Bug 1 fix: enqueue persistent job thay vì fire-and-forget
+    const { enqueue } = require('../../services/queue/queueWorker');
+    await enqueue(req.shop.shopId, 'broadcast', { broadcastId: broadcast.id });
+    await db.run(`UPDATE Broadcasts SET status = 'sending' WHERE id = ?`, [broadcast.id]);
+
+    res.json({ message: 'Đã xếp hàng gửi broadcast...', status: 'sending' });
   } catch (error) {
     res.status(500).json({ error: 'Internal Server Error' });
   }

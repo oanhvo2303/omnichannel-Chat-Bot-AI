@@ -108,7 +108,8 @@ router.get('/customer/:customerId', async (req, res) => {
   }
 });
 
-/** POST /api/tags/customer/:customerId/:tagId — Gắn tag */
+/** POST /api/tags/customer/:customerId/:tagId — Gắn tag (staff + admin + owner) */
+// Note: cho phép mọi staff, vì gắn tag là thao tác hàng ngày khi chat
 router.post('/customer/:customerId/:tagId', async (req, res) => {
   try {
     const db = getDB();
@@ -129,7 +130,7 @@ router.post('/customer/:customerId/:tagId', async (req, res) => {
   }
 });
 
-/** DELETE /api/tags/customer/:customerId/:tagId — Gỡ tag */
+/** DELETE /api/tags/customer/:customerId/:tagId — Gỡ tag (staff + admin + owner) */
 router.delete('/customer/:customerId/:tagId', async (req, res) => {
   try {
     const db = getDB();

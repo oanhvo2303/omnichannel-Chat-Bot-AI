@@ -32,6 +32,7 @@ const dataDeletionRoutes = require('./api/routes/dataDeletion.routes');
 const followupRoutes = require('./api/routes/followup.routes'); // FIX: mount followup
 const faqRoutes = require('./api/routes/faq.routes');             // FAQ / AI training data
 const auditRoutes = require('./api/routes/audit.routes');           // Audit log (admin only)
+const billingRoutes = require('./api/routes/billing.routes');       // Bug 4 fix: billing/quota
 
 /**
  * Creates and configures the Express application instance.
@@ -121,6 +122,7 @@ const createApp = () => {
   app.use('/api/followup', followupRoutes);                          // FIX: Follow-up campaigns
   app.use('/api/faq', faqRoutes);                                    // FAQ / AI training data
   app.use('/api/audit', auditRoutes);                                 // Audit log (admin only)
+  app.use('/api/billing', billingRoutes);                             // Bug 4 fix: billing/quota
   app.use('/api', apiRoutes);             // Protected: cần JWT
 
 

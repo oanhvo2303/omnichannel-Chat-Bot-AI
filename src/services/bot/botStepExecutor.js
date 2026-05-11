@@ -11,20 +11,46 @@ const { getDB } = require('../../infra/database/sqliteConnection');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Gửi ảnh qua Facebook Attachment API
+ * Detect media type from URL
+ */
+function detectMediaType(url) {
+  const lower = (url || '').toLowerCase();
+  if (/\.(mp4|webm|mov|avi|flv)$/.test(lower)) return 'video';
+  if (/\.(mp3|aac|ogg|wav)$/.test(lower)) return 'audio';
+  return 'image';
+}
+
+/**
+ * Gửi media (ảnh/video) qua Facebook Attachment API
  * @param {string} recipientId - PSID người nhận
- * @param {string} imageUrl - URL ảnh
+ * @param {string} mediaUrl - URL ảnh hoặc video
  * @param {string} pageAccessToken
  */
-async function sendImageAttachment(recipientId, imageUrl, pageAccessToken) {
-  if (!pageAccessToken || !imageUrl) return;
+async function sendMediaAttachment(recipientId, mediaUrl, pageAccessToken) {
+  if (!pageAccessToken || !mediaUrl) return;
+
+  // Facebook không truy cập được localhost → chuyển sang public URL
+  let publicUrl = mediaUrl;
+  if (mediaUrl.includes('localhost') || mediaUrl.includes('127.0.0.1')) {
+    const publicBase = process.env.PUBLIC_URL || process.env.SITE_URL || '';
+    if (publicBase) {
+      publicUrl = mediaUrl.replace(/https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/, publicBase);
+      console.log(`[BOT STEP] 🔄 Rewrite URL: ${mediaUrl.substring(0, 50)}... → ${publicUrl.substring(0, 50)}...`);
+    } else {
+      console.warn(`[BOT STEP] ⚠️ Media dùng localhost nhưng chưa set SITE_URL → Facebook sẽ không tải được!`);
+    }
+  }
+
+  const mediaType = detectMediaType(publicUrl);
+  console.log(`[BOT STEP] 📎 Gửi ${mediaType}: ${publicUrl.substring(0, 80)}`);
+
   try {
     const payload = {
       recipient: { id: recipientId },
       message: {
         attachment: {
-          type: 'image',
-          payload: { url: imageUrl, is_reusable: true },
+          type: mediaType,
+          payload: { url: publicUrl, is_reusable: true },
         },
       },
     };
@@ -38,12 +64,12 @@ async function sendImageAttachment(recipientId, imageUrl, pageAccessToken) {
     );
     const data = await res.json();
     if (!res.ok) {
-      console.error(`[BOT STEP] ❌ Lỗi gửi ảnh:`, data.error?.message);
+      console.error(`[BOT STEP] ❌ Lỗi gửi ${mediaType} (HTTP ${res.status}):`, JSON.stringify(data.error));
     } else {
-      console.log(`[BOT STEP] 🖼️ Gửi ảnh → ${recipientId}: ${imageUrl.substring(0, 60)}...`);
+      console.log(`[BOT STEP] ✅ Gửi ${mediaType} OK → PSID ${recipientId}`);
     }
   } catch (err) {
-    console.error(`[BOT STEP] ❌ Network error gửi ảnh:`, err.message);
+    console.error(`[BOT STEP] ❌ Network error gửi ${mediaType}:`, err.message);
   }
 }
 
@@ -143,12 +169,13 @@ async function executeBotSteps({ steps, senderId, pageAccessToken, shopId, custo
       // ═══════════════════════════════════════
       const mediaUrls = Array.isArray(step.media_urls) ? step.media_urls.filter(Boolean) : [];
       for (const mediaUrl of mediaUrls) {
-        await sendImageAttachment(senderId, mediaUrl, pageAccessToken);
+        await sendMediaAttachment(senderId, mediaUrl, pageAccessToken);
 
         // Lưu message vào DB
+        const mediaType = detectMediaType(mediaUrl);
         const mediaResult = await db.run(
           'INSERT INTO Messages (shop_id, customer_id, sender, sender_type, text, intent, type) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [shopId, customerId, 'bot', 'bot', `[Ảnh] ${mediaUrl}`, 'keyword_rule', 'inbox']
+          [shopId, customerId, 'bot', 'bot', `[${mediaType === 'video' ? 'Video' : 'Ảnh'}] ${mediaUrl}`, 'keyword_rule', 'inbox']
         );
 
         // Emit Socket cho Dashboard
@@ -204,6 +231,16 @@ async function executeBotSteps({ steps, senderId, pageAccessToken, shopId, custo
       console.error(`[BOT STEP] ❌ ${stepLabel} LỖI:`, stepError.message);
       // Tiếp tục bước tiếp theo, không dừng chuỗi
     }
+  }
+
+  // Bug 3a fix: cập nhật last_bot_message_at sau khi bot gửi xong kịch bản
+  try {
+    await db.run(
+      `UPDATE Customers SET last_bot_message_at = CURRENT_TIMESTAMP WHERE id = ? AND shop_id = ?`,
+      [customerId, shopId]
+    );
+  } catch (e) {
+    console.warn('[BOT STEP] last_bot_message_at update failed:', e.message);
   }
 
   // Cập nhật lastMessage trong customer list

@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
@@ -481,6 +481,12 @@ router.post('/chat/send', async (req, res) => {
       [shopId, customerId, 'bot', 'staff', text, 'inbox']
     );
 
+    // Bug 3b fix: staff gửi tay cũng cập nhật last_bot_message_at để followup scheduler biết
+    await db.run(
+      `UPDATE Customers SET last_bot_message_at = CURRENT_TIMESTAMP WHERE id = ? AND shop_id = ?`,
+      [customerId, shopId]
+    );
+
     // Lấy timestamp thật từ DB để đảm bảo frontend hiển thị đúng
     const savedMsg = await db.get('SELECT timestamp FROM Messages WHERE id = ?', [result.lastID]);
 
@@ -497,12 +503,13 @@ router.post('/chat/send', async (req, res) => {
       type: 'inbox',
       timestamp: savedMsg?.timestamp || new Date().toISOString(),
     };
-    
+
     // Phát vào Room riêng của shop
     if (io) io.to(String(shopId)).emit('new_message', msgData);
 
     console.log(`[CHAT] Đã gửi tin nhắn tới Khách #${customerId}: "${text.substring(0, 30)}..."`);
     res.status(200).json(msgData);
+
 
   } catch (error) {
     console.error('[API] Lỗi Send API:', error.message);
