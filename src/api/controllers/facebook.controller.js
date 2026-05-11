@@ -8,6 +8,28 @@ const { getDB } = require('../../infra/database/sqliteConnection');
 const { getIO } = require('../../infra/socket/socketManager');
 const { sendCapiEvent } = require('../../services/facebookCapiService');
 
+// ─── Fix 1: Decrypt Gemini API key at-rest (mirrors aiSettings.routes.js) ────
+const _ENC_KEY_HEX = process.env.ENCRYPTION_KEY || '';
+function _decryptShopApiKey(stored) {
+  if (!stored) return null;
+  if (!stored.startsWith('enc:')) return stored; // legacy plaintext — pass through
+  if (_ENC_KEY_HEX.length !== 64) {
+    console.warn('[FB CTRL] ENCRYPTION_KEY chưa set — không thể decrypt shop API key!');
+    return null;
+  }
+  try {
+    const parts = stored.split(':'); // enc:iv:tag:ct
+    const encKey = Buffer.from(_ENC_KEY_HEX, 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', encKey, Buffer.from(parts[1], 'hex'));
+    decipher.setAuthTag(Buffer.from(parts[2], 'hex'));
+    return decipher.update(Buffer.from(parts[3], 'hex')) + decipher.final('utf8');
+  } catch (e) {
+    console.error('[FB CTRL] Decrypt API key thất bại:', e.message);
+    return null;
+  }
+}
+// ──────────────────────────────────────────────────────────────────────────────
+
 // =============================================
 // Regex phát hiện SĐT Việt Nam (để auto-hide comment)
 // =============================================
@@ -362,6 +384,7 @@ async function getOrCreateCustomer(db, shop, senderId, pageId, providedName = nu
  */
 async function processInboxMessage(pageId, senderId, messageText, imageData = null) {
   const pipelineStart = Date.now();
+  let _paToken = null; // Fix 2: capture page_access_token cho outer catch fallback
   console.log('═'.repeat(70));
   console.log(`[INBOX PIPELINE] 🚀 BẮT ĐẦU XỬ LÝ TIN NHẮN MỚI`);
   console.log(`[INBOX PIPELINE]   📄 Page ID    : ${pageId}`);
@@ -393,6 +416,7 @@ async function processInboxMessage(pageId, senderId, messageText, imageData = nu
       bot_rules_mode: integration.bot_rules_mode || 'keyword',
       ai_full_history: integration.ai_full_history === 1
     };
+    _paToken = shop.page_access_token; // Fix 2: capture để outer catch có thể gửi fallback
     console.log(`[AI TRACE] ✅ Tìm thấy Shop #${shop.id} | is_ai_active = ${shop.is_ai_active} (${shop.is_ai_active === 1 ? 'BẬT' : 'TẮT'}) | bot_rules_mode = ${shop.bot_rules_mode} | full_history = ${shop.ai_full_history ? '✅ BẬT' : '❌ TẮT'} | has_system_prompt = ${!!shop.ai_system_prompt}`);
 
     const customer = await getOrCreateCustomer(db, shop, senderId, pageId);
@@ -695,31 +719,35 @@ ${knowledgeEntries.join('\n\n')}
             : ragInstructions;
 
           console.log(`[AI TRACE] 🤖 Gọi Gemini AGENTIC cho Khách #${customer.id} (${customer.name}) | History: ${historyRows.length} msgs | Products: ${products.length} | FAQs: ${ragCtx.relevantFaqs.length} | Knowledge: ${shop.bot_rules_mode === 'knowledge' ? rules.length + ' rules' : 'OFF'} | Key: ${shopLicense?.gemini_api_key ? 'SHOP' : 'GLOBAL'} | Quota: ${shopLicense?.ai_messages_used || 0}/${shopLicense?.ai_quota_limit || 0}`);
-          const rawAnalysis = await agenticAnalyzeMessage(messageText, enrichedSystemPrompt, historyRows, { shopId: shop.id, customerId: customer.id, customerName: customer.name, shopApiKey: shopLicense?.gemini_api_key || null }, enrichedCatalog, imageData);
+          // Fix 1: decrypt key before passing to Gemini (enc:iv:tag:ct → plaintext)
+          const decryptedShopKey = _decryptShopApiKey(shopLicense?.gemini_api_key || null);
+          const rawAnalysis = await agenticAnalyzeMessage(messageText, enrichedSystemPrompt, historyRows, { shopId: shop.id, customerId: customer.id, customerName: customer.name, shopApiKey: decryptedShopKey }, enrichedCatalog, imageData);
 
           // ★ RAG Confidence Guard — chỉ escalate khi Gemini thực sự không có reply
           const ragResult = parseRAGResponse(rawAnalysis);
           const escalation = shouldEscalate(ragResult);
 
-          // Fix: KHÔNG escalate nếu Gemini đã có reply hợp lệ
-          // - rawAnalysis.reply có nội dung → Gemini đã hiểu và trả lời
-          // - toolCalls.length > 0 → Gemini đã thực hiện action (tag/order/script)
-          // Chỉ escalate khi reply rỗng VÀ không có tool call
-          const hasValidReply = rawAnalysis.reply && rawAnalysis.reply.trim().length > 5;
-          const hasToolCalls  = rawAnalysis.toolCalls?.length > 0;
-          const doEscalate    = escalation.shouldEscalate && !hasValidReply && !hasToolCalls;
+          // Fix 3: Escalation guard thông minh hơn
+          // Chỉ hard-escalate khi:
+          //   (A) Gemini tự khai source='escalate' — không biết trả lời
+          //   (B) confidence cực thấp (≤0.35) VÀ không có reply VÀ không có tool call
+          // Không escalate khi: Gemini có reply dài > 5 chars, dù confidence thấp
+          const hasValidReply      = rawAnalysis.reply && rawAnalysis.reply.trim().length > 5;
+          const hasToolCalls       = rawAnalysis.toolCalls?.length > 0;
+          const isExplicitEscalate = ragResult.source === 'escalate';
+          const isVeryLowConf      = typeof ragResult.confidence === 'number' && ragResult.confidence <= 0.35;
+          const doHardEscalate     = !hasValidReply && !hasToolCalls && (isExplicitEscalate || isVeryLowConf);
 
-          if (doEscalate) {
-            console.log(`[RAG] ⚠️ Escalating customer #${customer.id}: ${escalation.reason} (no valid reply)`);
+          if (doHardEscalate) {
+            console.log(`[RAG] ⚠️ Hard escalate #${customer.id}: source=${ragResult.source}, conf=${ragResult.confidence}`);
             replyText = buildEscalationReply(customer.name);
             replyIntent = 'ESCALATE';
             markNeedsHuman(customer.id, shop.id, escalation.reason);
           } else {
-            // Dùng reply của Gemini — đây là source of truth
             replyText = ragResult.reply;
             replyIntent = ragResult.intent;
-            if (escalation.shouldEscalate) {
-              console.log(`[RAG] ℹ️ Low confidence (${ragResult.confidence}) nhưng Gemini đã có reply → giữ nguyên, không escalate`);
+            if (escalation.shouldEscalate && !doHardEscalate) {
+              console.log(`[RAG] ℹ️ Soft conf (${ragResult.confidence}) nhưng Gemini có reply → giữ nguyên`);
             }
           }
 
@@ -971,11 +999,16 @@ ${knowledgeEntries.join('\n\n')}
     console.error('[INBOX PIPELINE]   Elapsed   :', Date.now() - pipelineStart, 'ms');
     console.error('═'.repeat(70));
 
-    // Emit lỗi pipeline lên Dashboard
-    // Lưu ý: không biết shop_id ở đây (lỗi xảy ra trước khi resolve shop) — chỉ log, không global emit
+    // Fix 2: nếu typing đã bật mà pipeline crash → gửi fallback cho khách
+    // _paToken được capture ngay sau khi resolve shop (xem bên dưới)
+    if (senderId && _paToken) {
+      callSendAPI(senderId, 'Dạ hệ thống đang gặp sự cố, nhân viên sẽ hỗ trợ bạn ngay! Xin lỗi vì sự bất tiện 🙏', _paToken)
+        .catch(() => {});
+    }
+
+    // Emit lỗi pipeline lên Dashboard (không có shopId → log thôi)
     try {
-      const io = getIO();
-      // Không có shopId → không thể room-scope → chỉ log lỗi vào server log thôi
+      getIO(); // just ensure no uncaught reference
       console.error('[PIPELINE CRASH EMIT] Không thể emit ai_error do chưa có shopId. Xem server log để debug.');
     } catch { /* chống crash thêm */ }
   }
