@@ -88,6 +88,20 @@ const authMiddleware = async (req, res, next) => {
       ai_messages_used: shopEntry.ai_messages_used || 0,
     };
 
+    // FIX RBAC: Nếu là Staff token, xác minh lại từ DB để bắt giảm quyền / bị xóa
+    if (decoded.staffId) {
+      const staffEntry = await db.get(
+        'SELECT id, role FROM Staff WHERE id = ? AND shop_id = ?',
+        [decoded.staffId, decoded.shopId]
+      );
+      if (!staffEntry) {
+        console.warn(`[AUTH] Staff #${decoded.staffId} không tồn tại trong Shop #${decoded.shopId} — từ chối token.`);
+        return res.status(401).json({ error: 'Unauthorized: Tài khoản nhân viên đã bị xóa. Vui lòng đăng nhập lại.' });
+      }
+      // Ghi đè role từ DB — bảo đảm JWT cũ không mang quyền cũ sau khi bị giáng
+      req.shop.role = staffEntry.role;
+    }
+
     next();
   } catch (error) {
     if (error.name === 'TokenExpiredError') {

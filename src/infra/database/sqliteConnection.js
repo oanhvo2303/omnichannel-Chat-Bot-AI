@@ -59,12 +59,26 @@ const initSQLite = async () => {
     try { await db.exec("ALTER TABLE Shops ADD COLUMN auto_assign_staff INTEGER DEFAULT 0"); } catch { /* exists */ }
     try { await db.exec("ALTER TABLE Shops ADD COLUMN default_shipping_fee INTEGER NOT NULL DEFAULT 30000"); } catch { /* exists */ }
     try { await db.exec("ALTER TABLE Shops ADD COLUMN free_shipping_threshold INTEGER NOT NULL DEFAULT 500000"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Shops ADD COLUMN free_shipping_min_quantity INTEGER NOT NULL DEFAULT 0"); } catch { /* exists */ }
 
     // ═══ SaaS License Management ═══
     try { await db.exec("ALTER TABLE Shops ADD COLUMN license_status TEXT DEFAULT 'ACTIVE'"); } catch { /* exists */ }
     try { await db.exec("ALTER TABLE Shops ADD COLUMN license_expires_at DATETIME"); } catch { /* exists */ }
     try { await db.exec("ALTER TABLE Shops ADD COLUMN ai_quota_limit INTEGER DEFAULT 1000"); } catch { /* exists */ }
     try { await db.exec("ALTER TABLE Shops ADD COLUMN ai_messages_used INTEGER DEFAULT 0"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Shops ADD COLUMN gemini_api_key TEXT"); } catch { /* exists */ }
+    // ═══ Auto Follow-up Settings ═══
+    try { await db.exec("ALTER TABLE Shops ADD COLUMN followup_enabled INTEGER DEFAULT 0"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Shops ADD COLUMN followup_delay_minutes INTEGER DEFAULT 10"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Shops ADD COLUMN followup_message TEXT"); } catch { /* exists */ }
+    // ═══ Remarketing Cycle Settings ═══
+    try { await db.exec("ALTER TABLE Shops ADD COLUMN remarketing_enabled INTEGER DEFAULT 0"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Shops ADD COLUMN remarketing_interval_min INTEGER DEFAULT 12"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Shops ADD COLUMN remarketing_interval_max INTEGER DEFAULT 23"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Shops ADD COLUMN remarketing_templates TEXT"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Shops ADD COLUMN remarketing_max_cycles INTEGER DEFAULT 30"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Shops ADD COLUMN remarketing_max_days INTEGER DEFAULT 30"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Shops ADD COLUMN remarketing_message_tag TEXT DEFAULT 'CONFIRMED_EVENT_UPDATE'"); } catch { /* exists */ }
 
     // Migrate: account_status → license_status (one-time sync for existing data)
     await db.exec("UPDATE Shops SET license_status = 'SUSPENDED' WHERE account_status = 'banned' AND license_status = 'ACTIVE'");
@@ -140,6 +154,11 @@ const initSQLite = async () => {
     try { await db.exec("ALTER TABLE Customers ADD COLUMN avatar_url TEXT"); } catch { /* exists */ }
     try { await db.exec("ALTER TABLE Customers ADD COLUMN internal_note TEXT"); } catch { /* exists */ }
     try { await db.exec("ALTER TABLE Customers ADD COLUMN is_ai_paused INTEGER DEFAULT 0"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Customers ADD COLUMN last_bot_message_at DATETIME"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Customers ADD COLUMN followup_sent_at DATETIME"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Customers ADD COLUMN remarketing_next_at DATETIME"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Customers ADD COLUMN remarketing_cycle_index INTEGER DEFAULT 0"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Customers ADD COLUMN remarketing_started_at DATETIME"); } catch { /* exists */ }
 
     // =============================================
     // Bảng Messages (thuộc về 1 Shop — denormalized)
@@ -223,6 +242,7 @@ const initSQLite = async () => {
     try { await db.exec("ALTER TABLE BotRules ADD COLUMN response_type TEXT DEFAULT 'text'"); } catch { /* exists */ }
     try { await db.exec("ALTER TABLE BotRules ADD COLUMN media_url TEXT"); } catch { /* exists */ }
     try { await db.exec("ALTER TABLE BotRules ADD COLUMN steps TEXT DEFAULT NULL"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE BotRules ADD COLUMN integration_id INTEGER DEFAULT NULL"); } catch { /* exists */ }
 
     // =============================================
     // Bảng CommentRules (Auto-reply Comment)
@@ -318,7 +338,25 @@ const initSQLite = async () => {
 
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_quickreplies_shop ON QuickReplies(shop_id);`);
 
+    // =============================================
+    // Bảng MediaLibrary (Thư viện ảnh/video upload)
+    // =============================================
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS MediaLibrary (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        shop_id    INTEGER NOT NULL,
+        filename   TEXT NOT NULL,
+        url        TEXT NOT NULL,
+        mimetype   TEXT NOT NULL DEFAULT 'image/jpeg',
+        size       INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (shop_id) REFERENCES Shops(id) ON DELETE CASCADE
+      );
+    `);
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_medialibrary_shop ON MediaLibrary(shop_id, created_at DESC);`);
+
     console.log('[DB] ✅ SQLite schemas are ready.');
+
 
     // =============================================
     // Bảng Broadcasts (Chiến dịch gửi tin hàng loạt)
@@ -366,13 +404,18 @@ const initSQLite = async () => {
         price          REAL NOT NULL DEFAULT 0,
         stock_quantity INTEGER NOT NULL DEFAULT 0,
         image_url      TEXT,
+        description    TEXT,
+        attributes     TEXT,
         created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (shop_id) REFERENCES Shops(id) ON DELETE CASCADE
       );
     `);
-
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_products_shop ON Products(shop_id);`);
     try { await db.exec("ALTER TABLE Products ADD COLUMN volume_pricing TEXT"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Products ADD COLUMN description TEXT"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Products ADD COLUMN attributes TEXT"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Products ADD COLUMN images TEXT"); } catch { /* exists */ }
+
 
     // [QA] Duplicate QuickReplies đã được xóa — bảng đã tạo ở dòng 265
 
@@ -402,6 +445,8 @@ const initSQLite = async () => {
     try { await db.exec("ALTER TABLE ShopIntegrations ADD COLUMN is_ai_active INTEGER DEFAULT 0"); } catch { /* exists */ }
     try { await db.exec("ALTER TABLE ShopIntegrations ADD COLUMN ai_system_prompt TEXT"); } catch { /* exists */ }
     try { await db.exec("ALTER TABLE ShopIntegrations ADD COLUMN auto_hide_comments TEXT DEFAULT 'none'"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE ShopIntegrations ADD COLUMN bot_rules_mode TEXT DEFAULT 'keyword'"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE ShopIntegrations ADD COLUMN ai_full_history INTEGER DEFAULT 0"); } catch { /* exists */ }
 
     await db.exec(`
       CREATE INDEX IF NOT EXISTS idx_integrations_shop ON ShopIntegrations(shop_id);
@@ -427,6 +472,25 @@ const initSQLite = async () => {
     `);
 
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_tracking_shop ON ShopTracking(shop_id);`);
+
+    // =============================================
+    // Bảng FAQ (Dữ liệu huấn luyện AI / Câu hỏi thường gặp)
+    // =============================================
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS FAQ (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        shop_id         INTEGER NOT NULL,
+        question        TEXT NOT NULL,
+        answer          TEXT NOT NULL,
+        category        TEXT,
+        integration_ids TEXT,              -- JSON array of ShopIntegration IDs (null = áp dụng tất cả trang)
+        is_active       INTEGER NOT NULL DEFAULT 1,
+        created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (shop_id) REFERENCES Shops(id) ON DELETE CASCADE
+      );
+    `);
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_faq_shop ON FAQ(shop_id, is_active);`);
 
     console.log('[DATABASE] Cấu trúc bảng đã được đồng bộ.');
 

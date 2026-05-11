@@ -3,6 +3,7 @@
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
+const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
 
 const router = express.Router();
 
@@ -42,7 +43,7 @@ router.get('/', async (req, res) => {
  * POST /api/tracking
  * Cập nhật cấu hình Facebook Pixel & CAPI
  */
-router.post('/', async (req, res) => {
+router.post('/', requireOwnerOrAdmin, async (req, res) => {
   try {
     const db = getDB();
     const shopId = req.shop.shopId;
@@ -81,7 +82,7 @@ router.post('/', async (req, res) => {
  * POST /api/tracking/test
  * Gửi Test Event để kiểm tra kết nối API
  */
-router.post('/test', async (req, res) => {
+router.post('/test', requireOwnerOrAdmin, async (req, res) => {
   try {
     const db = getDB();
     const shopId = req.shop.shopId;

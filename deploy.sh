@@ -122,13 +122,13 @@ echo "📦 [7/7] Khởi động ứng dụng với PM2..."
 if [ -f "package.json" ]; then
   pm2 delete all 2>/dev/null || true
   
-  # Backend
-  pm2 start src/app.js --name "omni-backend" --env production
+  # Backend — chạy server.js (entry point thật, có http.listen)
+  pm2 start server.js --name "omni-backend" --env production
   
   # Frontend
   if [ -d "frontend/.next" ]; then
     cd frontend
-    pm2 start npm --name "omni-frontend" -- start
+    pm2 start npm --name "omni-frontend" -- start -- -p 3002
     cd ..
   fi
   

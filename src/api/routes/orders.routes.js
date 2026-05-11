@@ -53,18 +53,29 @@ router.post('/', async (req, res) => {
     const db = getDB();
     const shopId = req.shop.shopId;
 
-    // Resolve items
+    // Resolve items — với validation chặt chẽ
     const resolvedItems = [];
     for (const item of items) {
+      // FIX: Validate quantity và price trước khi xử lý
+      const qty = parseInt(item.quantity);
+      if (!Number.isInteger(qty) || qty <= 0) {
+        return res.status(400).json({ error: `Mặt hàng "${item.name || '#' + item.product_id}": số lượng phải là số nguyên dương.` });
+      }
+
       if (item.product_id) {
         const product = await db.get('SELECT * FROM Products WHERE id = ? AND shop_id = ?', [item.product_id, shopId]);
         if (!product) return res.status(400).json({ error: `Sản phẩm #${item.product_id} không tồn tại.` });
-        if (product.stock_quantity < (item.quantity || 1)) {
+        if (product.stock_quantity < qty) {
           return res.status(400).json({ error: `"${product.name}" chỉ còn ${product.stock_quantity} sản phẩm.` });
         }
-        resolvedItems.push({ product_id: product.id, name: product.name, quantity: item.quantity || 1, price: product.price });
+        resolvedItems.push({ product_id: product.id, name: product.name, quantity: qty, price: product.price });
       } else {
-        resolvedItems.push({ product_id: null, name: item.name, quantity: item.quantity || 1, price: item.price || 0 });
+        // Custom item (không có mã sản phẩm)
+        const customPrice = Number(item.price);
+        if (!Number.isFinite(customPrice) || customPrice < 0) {
+          return res.status(400).json({ error: `Mặt hàng "${item.name}": giá phải là số không âm.` });
+        }
+        resolvedItems.push({ product_id: null, name: item.name, quantity: qty, price: customPrice });
       }
     }
 
@@ -325,17 +336,49 @@ router.patch('/:id', async (req, res) => {
       }
       await db.run('DELETE FROM OrderItems WHERE order_id = ?', [orderId]);
 
+      // FIX: Validate đầu vào từng mặt hàng trước khi thực hiện bất kỳ thay đổi DB nào
+      for (const item of items) {
+        const qty = parseInt(item.quantity);
+        if (!Number.isInteger(qty) || qty <= 0) {
+          return res.status(400).json({ error: `Mặt hàng "${item.name || '#' + item.product_id}": số lượng phải là số nguyên dương.` });
+        }
+        if (item.product_id) {
+          const product = await db.get('SELECT id, name, stock_quantity FROM Products WHERE id = ? AND shop_id = ?', [item.product_id, shopId]);
+          if (!product) return res.status(400).json({ error: `Sản phẩm #${item.product_id} không tồn tại.` });
+          // Tính tồn kho tạm thời (sau khi hoàn lại các mặt hàng cũ)
+          const oldItem = oldItems.find(oi => oi.product_id === item.product_id);
+          const stockAfterReturn = product.stock_quantity + (oldItem?.quantity || 0);
+          if (stockAfterReturn < qty) {
+            return res.status(400).json({ error: `"${product.name}" chỉ còn ${stockAfterReturn} sản phẩm sau khi hoàn kho.` });
+          }
+        } else if (item.price !== undefined) {
+          const customPrice = Number(item.price);
+          if (!Number.isFinite(customPrice) || customPrice < 0) {
+            return res.status(400).json({ error: `Mặt hàng "${item.name}": giá phải là số không âm.` });
+          }
+        }
+      }
+
+      // FIX: Dùng transaction để đảm bảo atomic (insert item + trừ kho không bị tách rời)
+      await db.run('BEGIN TRANSACTION');
+      try {
       // Insert new items + deduct stock
       let recalcSubtotal = 0;
       for (const item of items) {
+        const qty = parseInt(item.quantity);
         await db.run(
           'INSERT INTO OrderItems (order_id, product_id, name, quantity, price) VALUES (?, ?, ?, ?, ?)',
-          [orderId, item.product_id || null, item.name, item.quantity || 1, item.price || 0]
+          [orderId, item.product_id || null, item.name, qty, item.price || 0]
         );
-        recalcSubtotal += (item.price || 0) * (item.quantity || 1);
+        recalcSubtotal += (item.price || 0) * qty;
         if (item.product_id) {
-          await db.run('UPDATE Products SET stock_quantity = stock_quantity - ? WHERE id = ? AND shop_id = ?', [item.quantity || 1, item.product_id, shopId]);
+          await db.run('UPDATE Products SET stock_quantity = stock_quantity - ? WHERE id = ? AND shop_id = ?', [qty, item.product_id, shopId]);
         }
+      }
+      await db.run('COMMIT');
+      } catch (txErr) {
+        await db.run('ROLLBACK');
+        throw txErr;
       }
 
       // ★ Recalculate: total = subtotal + shipping - discount

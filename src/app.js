@@ -30,6 +30,7 @@ const adminRoutes = require('./api/routes/admin.routes');
 const aiSettingsRoutes = require('./api/routes/aiSettings.routes');
 const dataDeletionRoutes = require('./api/routes/dataDeletion.routes');
 const followupRoutes = require('./api/routes/followup.routes'); // FIX: mount followup
+const faqRoutes = require('./api/routes/faq.routes');             // FAQ / AI training data
 
 /**
  * Creates and configures the Express application instance.
@@ -113,6 +114,7 @@ const createApp = () => {
   app.use('/api/settings/ai', aiSettingsRoutes);                    // AI Settings per Shop
   app.use('/api/data-deletion', dataDeletionRoutes);               // Facebook Data Deletion Callback (GDPR)
   app.use('/api/followup', followupRoutes);                          // FIX: Follow-up campaigns
+  app.use('/api/faq', faqRoutes);                                    // FAQ / AI training data
   app.use('/api', apiRoutes);             // Protected: cần JWT
 
 

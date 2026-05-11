@@ -158,7 +158,7 @@ router.get('/customers', async (req, res) => {
         s.name AS assigned_staff_name
       FROM Customers c
       LEFT JOIN (
-        SELECT customer_id, text, type, timestamp
+      SELECT id, customer_id, text, type, timestamp
         FROM Messages
         WHERE id IN (
           SELECT MAX(id) FROM Messages WHERE id IS NOT NULL ${msgCondition} GROUP BY customer_id
@@ -317,6 +317,13 @@ router.post('/messages/internal', async (req, res) => {
     const shopId = req.shop.shopId;
     const staffName = req.shop.email || 'Staff';
 
+    // FIX: Kiểm tra customer thuộc đúng shop trước khi ghi
+    const customerCheck = await db.get(
+      'SELECT id FROM Customers WHERE id = ? AND shop_id = ?',
+      [customer_id, shopId]
+    );
+    if (!customerCheck) return res.status(404).json({ error: 'Khách hàng không tồn tại.' });
+
     const result = await db.run(
       'INSERT INTO Messages (shop_id, customer_id, sender, sender_type, text, type, is_internal) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [shopId, customer_id, 'bot', 'staff', text, 'inbox', 1]
@@ -351,7 +358,11 @@ router.post('/comments/:commentId/reply', async (req, res) => {
     const db = getDB();
     const shopId = req.shop.shopId;
     
-    const customer = await db.get('SELECT page_id FROM Customers WHERE id = ?', [customer_id]);
+    // FIX: Verify customer thuộc shop trước khi thực hiện hành động
+    const customer = await db.get(
+      'SELECT page_id FROM Customers WHERE id = ? AND shop_id = ?',
+      [customer_id, shopId]
+    );
     if (!customer?.page_id) return res.status(400).json({ error: 'Không tìm thấy kênh của khách.' });
 
     const integration = await db.get('SELECT access_token FROM ShopIntegrations WHERE page_id = ? AND shop_id = ?', [customer.page_id, shopId]);
@@ -388,7 +399,11 @@ router.post('/comments/:commentId/private', async (req, res) => {
     const db = getDB();
     const shopId = req.shop.shopId;
     
-    const customer = await db.get('SELECT page_id FROM Customers WHERE id = ?', [customer_id]);
+    // FIX: Verify customer thuộc shop trước khi thực hiện hành động
+    const customer = await db.get(
+      'SELECT page_id FROM Customers WHERE id = ? AND shop_id = ?',
+      [customer_id, shopId]
+    );
     if (!customer?.page_id) return res.status(400).json({ error: 'Không tìm thấy kênh của khách.' });
 
     const integration = await db.get('SELECT access_token FROM ShopIntegrations WHERE page_id = ? AND shop_id = ?', [customer.page_id, shopId]);
@@ -506,7 +521,11 @@ router.post('/comments/:commentId/visibility', async (req, res) => {
     const db = getDB();
     const shopId = req.shop.shopId;
 
-    const customer = await db.get('SELECT page_id FROM Customers WHERE id = ?', [customer_id]);
+    // FIX: Verify customer thuộc shop trước khi thực hiện hành động
+    const customer = await db.get(
+      'SELECT page_id FROM Customers WHERE id = ? AND shop_id = ?',
+      [customer_id, shopId]
+    );
     if (!customer?.page_id) return res.status(400).json({ error: 'Không tìm thấy kênh.' });
 
     const integration = await db.get('SELECT access_token FROM ShopIntegrations WHERE page_id = ? AND shop_id = ?', [customer.page_id, shopId]);

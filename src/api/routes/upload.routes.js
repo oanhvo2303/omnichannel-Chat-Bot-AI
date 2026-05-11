@@ -5,67 +5,140 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { authMiddleware } = require('../middlewares/authMiddleware');
+const { getDB } = require('../../infra/database/sqliteConnection');
 
 const router = express.Router();
 
-// Thư mục lưu ảnh
+// Thư mục lưu media
 const UPLOAD_DIR = path.join(__dirname, '../../uploads/bot_media');
 if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
 
-// Cấu hình Multer
+// ✅ URL công khai dùng SITE_URL từ env (tránh localhost trả về cho browser)
+const getSiteUrl = (req) => {
+  return process.env.SITE_URL || `${req.protocol}://${req.get('host')}`;
+};
+
+// FIX: Extension an toàn lấy từ mimetype whitelist — không tin originalname
+// Tránh các bypass như: upload file HTML với MIME image/jpeg và tên file.html
+const MIME_TO_SAFE_EXT = {
+  'image/jpeg':        '.jpg',
+  'image/png':         '.png',
+  'image/gif':         '.gif',
+  'image/webp':        '.webp',
+  'video/mp4':         '.mp4',
+  'video/webm':        '.webm',
+  'video/quicktime':   '.mov',
+  'video/x-msvideo':   '.avi',
+};
+
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
   filename: (_req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e6);
-    const ext = path.extname(file.originalname).toLowerCase();
+    // FIX: Dùng safe extension từ whitelist — bỏ extension từ originalname
+    const ext = MIME_TO_SAFE_EXT[file.mimetype] || '.bin';
     cb(null, `bot_${uniqueSuffix}${ext}`);
   },
 });
 
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo'];
+
 const fileFilter = (_req, file, cb) => {
-  const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-  if (allowed.includes(file.mimetype)) {
+  if ([...ALLOWED_IMAGE_TYPES, ...ALLOWED_VIDEO_TYPES].includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(new Error('Chỉ hỗ trợ ảnh JPG, PNG, GIF, WebP.'), false);
+    cb(new Error('Chỉ hỗ trợ ảnh (JPG/PNG/GIF/WebP) và video (MP4/WebM/MOV).'), false);
   }
 };
 
 const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB (đủ cho video)
 });
 
-/**
- * POST /api/upload
- * Upload ảnh cho Bot Rules.
- * Trả về URL public để lưu vào BotRules.media_url
- */
-router.post('/', authMiddleware, upload.single('image'), (req, res) => {
+// =============================================
+// POST /api/upload — Upload ảnh/video cho Bot Rules
+// =============================================
+router.post('/', authMiddleware, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ error: 'Không nhận được file ảnh.' });
+      return res.status(400).json({ error: 'Không nhận được file.' });
     }
 
-    // Tạo URL public
-    const protocol = req.protocol;
-    const host = req.get('host');
-    const publicUrl = `${protocol}://${host}/uploads/bot_media/${req.file.filename}`;
+    const siteUrl = getSiteUrl(req);
+    const publicUrl = `${siteUrl}/uploads/bot_media/${req.file.filename}`;
+    const isVideo = ALLOWED_VIDEO_TYPES.includes(req.file.mimetype);
 
-    console.log(`[UPLOAD] ✅ ${req.file.originalname} → ${req.file.filename} (${(req.file.size / 1024).toFixed(1)}KB)`);
+    // ★ Lưu vào MediaLibrary DB để hiển thị thư viện
+    try {
+      const db = getDB();
+      await db.run(
+        'INSERT INTO MediaLibrary (shop_id, filename, url, mimetype, size) VALUES (?, ?, ?, ?, ?)',
+        [req.shop.shopId, req.file.filename, publicUrl, req.file.mimetype, req.file.size]
+      );
+    } catch (dbErr) {
+      // DB chưa có bảng → không block upload
+      console.warn('[UPLOAD] MediaLibrary insert failed:', dbErr.message);
+    }
+
+    console.log(`[UPLOAD] ✅ ${req.file.originalname} → ${req.file.filename} (${(req.file.size / 1024).toFixed(1)}KB) [${isVideo ? 'VIDEO' : 'IMAGE'}]`);
 
     res.json({
       url: publicUrl,
       filename: req.file.filename,
       size: req.file.size,
       mimetype: req.file.mimetype,
+      type: isVideo ? 'video' : 'image',
     });
   } catch (error) {
     console.error('[UPLOAD] Lỗi:', error.message);
-    res.status(500).json({ error: 'Lỗi upload ảnh.' });
+    res.status(500).json({ error: 'Lỗi upload file.' });
+  }
+});
+
+// =============================================
+// GET /api/upload/library — Thư viện media của shop
+// =============================================
+router.get('/library', authMiddleware, async (req, res) => {
+  try {
+    const db = getDB();
+    const items = await db.all(
+      'SELECT id, filename, url, mimetype, size, created_at FROM MediaLibrary WHERE shop_id = ? ORDER BY created_at DESC LIMIT 100',
+      [req.shop.shopId]
+    );
+    res.json({ items });
+  } catch (error) {
+    console.error('[UPLOAD LIBRARY] Lỗi:', error.message);
+    // Fallback: nếu bảng chưa tạo xong
+    res.json({ items: [] });
+  }
+});
+
+// =============================================
+// DELETE /api/upload/library/:id — Xóa file khỏi thư viện
+// =============================================
+router.delete('/library/:id', authMiddleware, async (req, res) => {
+  try {
+    const db = getDB();
+    const item = await db.get(
+      'SELECT id, filename FROM MediaLibrary WHERE id = ? AND shop_id = ?',
+      [req.params.id, req.shop.shopId]
+    );
+    if (!item) return res.status(404).json({ error: 'File không tồn tại.' });
+
+    // Xóa file vật lý
+    const filePath = path.join(UPLOAD_DIR, item.filename);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+    await db.run('DELETE FROM MediaLibrary WHERE id = ?', [item.id]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[UPLOAD DELETE] Lỗi:', error.message);
+    res.status(500).json({ error: 'Lỗi xóa file.' });
   }
 });
 
@@ -73,13 +146,11 @@ router.post('/', authMiddleware, upload.single('image'), (req, res) => {
 router.use((err, _req, res, _next) => {
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ error: 'File quá lớn. Tối đa 5MB.' });
+      return res.status(400).json({ error: 'File quá lớn. Tối đa 50MB.' });
     }
     return res.status(400).json({ error: err.message });
   }
-  if (err) {
-    return res.status(400).json({ error: err.message });
-  }
+  if (err) return res.status(400).json({ error: err.message });
 });
 
 module.exports = router;
