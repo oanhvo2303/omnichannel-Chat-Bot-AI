@@ -612,15 +612,38 @@ async function processInboxMessage(pageId, senderId, messageText, imageData = nu
         historyRows.reverse();
         console.log(`[AI TRACE] 📜 History mode: ${shop.ai_full_history ? 'FULL (' + historyRows.length + ' msgs)' : 'COMPACT (' + historyRows.length + '/10 msgs)'}`);
 
-        // ★ Inject danh sách sản phẩm vào prompt để AI biết shop bán gì
+        // Fix Issue 3: Relevance-ranked catalog — chỉ inject top 15 SP liên quan thay vì toàn bộ
+        // Giảm token cost O(n) → O(15) khi shop có nhiều sản phẩm, tăng độ chính xác context
+        const CATALOG_LIMIT = 15;
         const products = await db.all(
           'SELECT name, price, stock_quantity, sku, volume_pricing FROM Products WHERE shop_id = ? AND stock_quantity > 0',
           [shop.id]
         );
-        const productCatalog = products.length > 0
-          ? products.map(p => {
+
+        // Rank products bằng keyword relevance với tin nhắn hiện tại
+        const msgNorm = messageText.toLowerCase()
+          .normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd');
+        const msgWords = msgNorm.split(/\s+/).filter(w => w.length >= 2);
+
+        const scoredProducts = products.map(p => {
+          const pNorm = p.name.toLowerCase()
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd');
+          const skuNorm = (p.sku || '').toLowerCase();
+          // Score: keyword hits + SKU exact match bonus
+          const kwScore = msgWords.filter(w => pNorm.includes(w)).length;
+          const skuBonus = msgWords.some(w => skuNorm.includes(w)) ? 3 : 0;
+          return { ...p, _score: kwScore + skuBonus };
+        });
+
+        // Lấy top 15 theo relevance; nếu không có match → top 15 theo price (showcase mặc định)
+        const hasAnyMatch = scoredProducts.some(p => p._score > 0);
+        const rankedProducts = hasAnyMatch
+          ? scoredProducts.sort((a, b) => b._score - a._score).slice(0, CATALOG_LIMIT)
+          : products.slice(0, CATALOG_LIMIT); // giữ nguyên thứ tự DB (thường theo id)
+
+        const productCatalog = rankedProducts.length > 0
+          ? rankedProducts.map(p => {
               let line = `- ${p.name} (${p.sku || 'N/A'}): ${p.price?.toLocaleString()}đ — Còn ${p.stock_quantity} sp`;
-              // Inject volume pricing tiers
               if (p.volume_pricing) {
                 try {
                   const tiers = JSON.parse(p.volume_pricing);
@@ -633,6 +656,10 @@ async function processInboxMessage(pageId, senderId, messageText, imageData = nu
               return line;
             }).join('\n')
           : '(Chưa có sản phẩm trong kho)';
+
+        if (products.length > CATALOG_LIMIT) {
+          console.log(`[AI TRACE] 📦 Catalog: ${rankedProducts.length}/${products.length} SP (top relevant) | hasMatch=${hasAnyMatch}`);
+        }
 
         // ★ Inject shipping settings vào catalog để AI tính phí ship chính xác
         const shipSettings = await db.get('SELECT default_shipping_fee, free_shipping_threshold, free_shipping_min_quantity FROM Shops WHERE id = ?', [shop.id]);

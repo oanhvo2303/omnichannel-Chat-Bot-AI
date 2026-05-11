@@ -58,7 +58,7 @@ async function retrieveFAQ(shopId, messageText, integrationId = null) {
     .filter(w => w.length >= 2 && !STOP_WORDS.has(w));
 
   if (words.length === 0) {
-    return allFaqs.slice(0, 3).map(f => ({ ...f, score: 0.3 }));
+    return []; // Không có keyword → không inject FAQ (tránh hallucinate ngẫu nhiên)
   }
 
   // Score từng FAQ dựa trên số keyword match (cả normalized)
@@ -97,10 +97,15 @@ async function retrieveFAQ(shopId, messageText, integrationId = null) {
     return { ...faq, score };
   });
 
+  // Fix Issue 2: min-score threshold = 0.25 (tránh inject FAQ nhiễu khi chỉ khớp 1 keyword nhỏ)
+  // Ví dụ: 5 từ khóa, hit 1 → score=0.2 → bị lọc; hit 2+ → score≥0.4 → pass
+  const MIN_FAQ_SCORE = 0.25;
+  const MAX_FAQ_RESULTS = 5; // Giới hạn top-5 (tập trung, ít noise hơn top-10)
+
   return scored
-    .filter(f => f.score > 0)
+    .filter(f => f.score >= MIN_FAQ_SCORE)
     .sort((a, b) => b.score - a.score)
-    .slice(0, MAX_FAQ_INJECT);
+    .slice(0, MAX_FAQ_RESULTS);
 }
 
 // ─── 2. Build RAG context string ─────────────────────────────────

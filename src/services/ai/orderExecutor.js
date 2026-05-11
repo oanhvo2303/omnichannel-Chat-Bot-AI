@@ -136,7 +136,7 @@ async function executeAIOrder(args, shopId, customerId) {
       // Nếu score = 0 → không có SP nào match
       if (bestScore === 0) { product = null; candidates = []; }
 
-      // Fix 4: ambiguity check — 2+ SP cùng score, tên khác nhau
+      // Fix 4a: ambiguity check — 2+ SP cùng score, tên khác nhau
       if (candidates.length > 1) {
         const uniqueNames = [...new Set(candidates.map(p => p.name))];
         if (uniqueNames.length > 1) {
@@ -145,9 +145,21 @@ async function executeAIOrder(args, shopId, customerId) {
           return {
             success: false,
             error: 'ambiguous_product',
-            message: `Bạn muốn đặt sản phẩm nào trong số sau? Ảnh bác cho mình biết số tương ứng nhé ❤️\n${nameList}`,
+            message: `Bạn muốn đặt sản phẩm nào trong số sau? Cho mình biết số tương ứng nhé ❤️\n${nameList}`,
           };
         }
+      }
+
+      // Fix 4b: Min-score threshold — tránh tạo đơn khi chỉ có 1 keyword mơ hồ match
+      const MIN_MATCH_SCORE = 2;
+      if (product && bestScore < MIN_MATCH_SCORE) {
+        // Chỉ 1 keyword match → yêu cầu xác nhận thay vì tự quyết định
+        console.log(`[ORDER EXECUTOR] ⚠️ Low-confidence match: "${product.name}" (score=${bestScore}/${keywords.length}) — yêu cầu xác nhận`);
+        return {
+          success: false,
+          error: 'low_confidence_match',
+          message: `Bạn muốn đặt sản phẩm **${product.name}** (${product.price?.toLocaleString()}đ) đúng không ạ? 😊\nNếu đúng, anh/chị xác nhận lại tên sản phẩm giúp em nhé!`,
+        };
       }
 
       if (product) {

@@ -631,26 +631,28 @@ CHÚ Ý VỀ PHONG CÁCH TIN NHẮN:
         console.log(`[GEMINI AGENTIC] 💬 Text response sau ${elapsed}ms: "${textResponse?.substring(0, 100)}..."`);
         console.log('─'.repeat(60));
 
-        // Parse intent nếu có JSON
-        let intent = 'KHÁC';
+        // Fix Issue 1: agentModel không có responseMimeType:json → text response là natural language
+        // KHÔNG dùng heuristic regex parse (dễ sai khi reply có dấu {})
+        // Chỉ parse JSON nếu response bắt đầu bằng '{' (strict signal)
+        let intent = 'HỖ_TRỢ'; // default cho text response từ agentic model
         let reply = textResponse;
-        let confidence = null; // null = không có → parseRAGResponse sẽ dùng heuristic
+        let confidence = 0.8; // Agentic model tự chọn trả text → có nghĩa là đủ tự tin
         let source = 'general';
 
-        // Thử parse JSON nếu trả về JSON format
-        try {
-          const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[0]);
+        const trimmed = textResponse?.trim() || '';
+        if (trimmed.startsWith('{')) {
+          // Chỉ parse khi response thực sự là JSON object
+          try {
+            const parsed = JSON.parse(trimmed);
             if (parsed.intent) intent = parsed.intent;
             if (parsed.reply) reply = parsed.reply;
-            // Bug 2 fix: preserve confidence + source từ RAG response
             if (typeof parsed.confidence === 'number') confidence = parsed.confidence;
             if (parsed.source) source = parsed.source;
+          } catch {
+            // Parse fail → dùng raw text (an toàn hơn là lấy sai data)
+            reply = textResponse;
+            console.warn('[GEMINI AGENTIC] JSON parse fail trên response bắt đầu bằng "{" → dùng raw text');
           }
-        } catch {
-          // Không phải JSON → dùng raw text làm reply
-          reply = textResponse;
         }
 
         return { intent, reply, confidence, source, toolCalls: [] };
