@@ -6,7 +6,7 @@ const config = require('../../config');
 const { getDB } = require('../../infra/database/sqliteConnection');
 
 /**
- * Auth Controller — Đăng ký, Đăng nhập, Lấy thông tin Shop
+ * Auth Controller — đăng ký, đăng nhập, profile, đổi mật khẩu
  */
 
 // ---- POST /api/auth/register ----
@@ -141,4 +141,79 @@ const me = async (req, res) => {
   }
 };
 
-module.exports = { register, login, me };
+// ---- PATCH /api/auth/profile ----
+// User tự cập nhật thông tin cơ bản (shop_name, email)
+const updateProfile = async (req, res) => {
+  try {
+    const db = getDB();
+    const shopId = req.shop.shopId;
+    const { shop_name, email } = req.body;
+
+    if (!shop_name && !email) {
+      return res.status(400).json({ error: 'Cần cung cấp ít nhất shop_name hoặc email.' });
+    }
+
+    // Validate email không trùng với account khác
+    if (email) {
+      const emailTrimmed = email.trim().toLowerCase();
+      const existing = await db.get('SELECT id FROM Shops WHERE email = ? AND id != ?', [emailTrimmed, shopId]);
+      if (existing) return res.status(409).json({ error: 'Email này đã được sử dụng bởi tài khoản khác.' });
+    }
+
+    const updates = [];
+    const params = [];
+    if (shop_name) { updates.push('shop_name = ?'); params.push(shop_name.trim()); }
+    if (email) { updates.push('email = ?'); params.push(email.trim().toLowerCase()); }
+    params.push(shopId);
+
+    await db.run(`UPDATE Shops SET ${updates.join(', ')} WHERE id = ?`, params);
+    console.log(`[AUTH] Shop #${shopId} cập nhật profile: ${updates.join(', ')}`);
+
+    const updated = await db.get(
+      'SELECT id, email, shop_name, role, subscription_plan, license_status FROM Shops WHERE id = ?',
+      [shopId]
+    );
+    res.json({ success: true, message: 'Đã cập nhật thông tin.', shop: updated });
+  } catch (error) {
+    console.error('[AUTH] Lỗi updateProfile:', error.message);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+};
+
+// ---- PATCH /api/auth/password ----
+// User tự đổi mật khẩu (yêu cầu mật khẩu cũ)
+const changePassword = async (req, res) => {
+  try {
+    const db = getDB();
+    const shopId = req.shop.shopId;
+    const { old_password, new_password } = req.body;
+
+    if (!old_password || !new_password) {
+      return res.status(400).json({ error: 'Cần cung cấp mật khẩu cũ và mật khẩu mới.' });
+    }
+    if (new_password.length < 6) {
+      return res.status(400).json({ error: 'Mật khẩu mới phải có ít nhất 6 ký tự.' });
+    }
+    if (old_password === new_password) {
+      return res.status(400).json({ error: 'Mật khẩu mới không được trùng mật khẩu cũ.' });
+    }
+
+    const shop = await db.get('SELECT password_hash FROM Shops WHERE id = ?', [shopId]);
+    if (!shop) return res.status(404).json({ error: 'Tài khoản không tồn tại.' });
+
+    const isMatch = await bcrypt.compare(old_password, shop.password_hash);
+    if (!isMatch) return res.status(401).json({ error: 'Mật khẩu cũ không đúng.' });
+
+    const salt = await bcrypt.genSalt(10);
+    const new_hash = await bcrypt.hash(new_password, salt);
+    await db.run('UPDATE Shops SET password_hash = ? WHERE id = ?', [new_hash, shopId]);
+    console.log(`[AUTH] Shop #${shopId} đã đổi mật khẩu thành công.`);
+
+    res.json({ success: true, message: 'Đã đổi mật khẩu thành công. Vui lòng đăng nhập lại.' });
+  } catch (error) {
+    console.error('[AUTH] Lỗi changePassword:', error.message);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+};
+
+module.exports = { register, login, me, updateProfile, changePassword };

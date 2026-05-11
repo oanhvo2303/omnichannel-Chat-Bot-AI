@@ -282,4 +282,95 @@ router.post('/reset-ai-quotas', async (req, res) => {
   }
 });
 
+/**
+ * PATCH /api/admin/tenants/:id/profile
+ * Admin sửa thông tin shop_name + email của user
+ */
+router.patch('/tenants/:id/profile', async (req, res) => {
+  try {
+    const db = getDB();
+    const shopId = req.params.id;
+    const { shop_name, email } = req.body;
+
+    if (!shop_name && !email) {
+      return res.status(400).json({ error: 'Cần ít nhất shop_name hoặc email.' });
+    }
+
+    const shop = await db.get('SELECT id FROM Shops WHERE id = ?', [shopId]);
+    if (!shop) return res.status(404).json({ error: 'Shop không tồn tại.' });
+
+    if (email) {
+      const conflict = await db.get('SELECT id FROM Shops WHERE email = ? AND id != ?', [email.trim().toLowerCase(), shopId]);
+      if (conflict) return res.status(409).json({ error: 'Email đã được sử dụng bởi tài khoản khác.' });
+    }
+
+    const updates = [];
+    const params = [];
+    if (shop_name) { updates.push('shop_name = ?'); params.push(shop_name.trim()); }
+    if (email) { updates.push('email = ?'); params.push(email.trim().toLowerCase()); }
+    params.push(shopId);
+
+    await db.run(`UPDATE Shops SET ${updates.join(', ')} WHERE id = ?`, params);
+    console.log(`[SUPER_ADMIN] ✏️ Admin #${req.shop.shopId} sửa profile Shop #${shopId}: ${updates.join(', ')}`);
+
+    const updated = await db.get('SELECT id, email, shop_name, role, account_status, subscription_plan, license_status FROM Shops WHERE id = ?', [shopId]);
+    res.json({ success: true, message: 'Đã cập nhật thông tin.', shop: updated });
+  } catch (error) {
+    console.error('[SUPER_ADMIN] Lỗi sửa profile:', error.message);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+/**
+ * PATCH /api/admin/tenants/:id/reset-password
+ * Admin đặt lại mật khẩu cho user (không cần mật khẩu cũ)
+ */
+router.patch('/tenants/:id/reset-password', async (req, res) => {
+  try {
+    const db = getDB();
+    const shopId = req.params.id;
+    const { new_password } = req.body;
+
+    if (!new_password || new_password.length < 6) {
+      return res.status(400).json({ error: 'Mật khẩu mới phải có ít nhất 6 ký tự.' });
+    }
+
+    const shop = await db.get('SELECT id, role FROM Shops WHERE id = ?', [shopId]);
+    if (!shop) return res.status(404).json({ error: 'Shop không tồn tại.' });
+    if (shop.role === 'SUPER_ADMIN' && String(shopId) !== String(req.shop.shopId)) {
+      return res.status(403).json({ error: 'Không thể đặt lại mật khẩu cho Super Admin khác.' });
+    }
+
+    const salt = await require('bcryptjs').genSalt(10);
+    const hash = await require('bcryptjs').hash(new_password, salt);
+    await db.run('UPDATE Shops SET password_hash = ? WHERE id = ?', [hash, shopId]);
+
+    console.log(`[SUPER_ADMIN] 🔑 Admin #${req.shop.shopId} đã reset password Shop #${shopId}`);
+    res.json({ success: true, message: `Đã đặt lại mật khẩu cho Shop #${shopId}.` });
+  } catch (error) {
+    console.error('[SUPER_ADMIN] Lỗi reset password:', error.message);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+/**
+ * POST /api/admin/tenants/:id/reset-quota
+ * Admin reset bộ đếm AI cho 1 shop cụ thể (đầu kỳ billing)
+ */
+router.post('/tenants/:id/reset-quota', async (req, res) => {
+  try {
+    const db = getDB();
+    const shopId = req.params.id;
+    const shop = await db.get('SELECT id FROM Shops WHERE id = ?', [shopId]);
+    if (!shop) return res.status(404).json({ error: 'Shop không tồn tại.' });
+
+    await db.run('UPDATE Shops SET ai_messages_used = 0 WHERE id = ?', [shopId]);
+    console.log(`[SUPER_ADMIN] 🔄 Admin #${req.shop.shopId} reset AI quota counter Shop #${shopId}`);
+    res.json({ success: true, message: `Đã reset AI quota usage cho Shop #${shopId}.` });
+  } catch (error) {
+    console.error('[SUPER_ADMIN] Lỗi reset quota shop:', error.message);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
 module.exports = router;

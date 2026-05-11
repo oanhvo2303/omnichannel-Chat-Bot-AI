@@ -7,7 +7,7 @@ import {
   MessageSquare, Bot, Package, Tags, Contact,
   BarChart3, Megaphone, ChevronLeft, ChevronRight, Zap, Sparkles,
   LogOut, Settings, PanelLeftClose, PanelLeft, Link2, Activity, Send, UserCog, ClipboardList, MessageSquareReply,
-  Crown, X, Images, HelpCircle, Truck,
+  Crown, X, Images, HelpCircle, Truck, User,
 } from "lucide-react";
 
 const menuItems = [
@@ -31,6 +31,8 @@ const menuItems = [
   { id: "integrations", label: "Kết nối Đa kênh", icon: Link2, href: "/settings/integrations" },
   { id: "page-health", label: "Page Health", icon: Activity, href: "/settings/page-health" },
   { id: "tracking", label: "Pixel & Tracking", icon: Activity, href: "/settings/tracking" },
+  { type: "divider", label: "TÀI KHOẢN" },
+  { id: "profile", label: "Thông tin & Mật khẩu", icon: User, href: "/settings/profile" },
 ];
 
 export default function Sidebar({ onMobileClose }) {
@@ -186,6 +188,26 @@ export default function Sidebar({ onMobileClose }) {
             style={{ justifyContent: collapsed ? "center" : "flex-start" }}>
             {collapsed ? <PanelLeft className="w-[18px] h-[18px]" /> : <PanelLeftClose className="w-[18px] h-[18px]" />}
             {showExpanded && <span className="text-[13px] font-medium">Thu gọn</span>}
+          </button>
+        )}
+        {/* User info block — click để vào profile */}
+        {showExpanded && shop && (
+          <button
+            onClick={() => handleNav('/settings/profile')}
+            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl transition-all group ${
+              pathname.startsWith('/settings/profile')
+                ? 'bg-zinc-800 text-white'
+                : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
+            }`}
+          >
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-xs font-bold text-white flex-shrink-0">
+              {(shop.shop_name || 'S').charAt(0).toUpperCase()}
+            </div>
+            <div className="flex-1 min-w-0 text-left">
+              <p className="text-[12px] font-semibold truncate leading-tight">{shop.shop_name || 'My Shop'}</p>
+              <p className="text-[10px] text-zinc-500 truncate leading-tight">{shop.email || ''}</p>
+            </div>
+            <User className="w-3.5 h-3.5 flex-shrink-0 text-zinc-600 group-hover:text-zinc-400" />
           </button>
         )}
         <button onClick={handleLogout}

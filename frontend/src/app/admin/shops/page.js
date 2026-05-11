@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import {
   Users, Search, ShieldCheck, Ban, CheckCircle2, Clock, Zap,
   Calendar, Crown, ArrowUpDown, Loader2, AlertTriangle, MoreHorizontal,
-  MessageSquare, ShoppingBag, ChevronDown
+  MessageSquare, ShoppingBag, ChevronDown, SlidersHorizontal, Pencil, KeyRound, RefreshCw
 } from "lucide-react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
@@ -31,10 +31,16 @@ export default function ShopsManagementPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("ALL");
-  const [actionShop, setActionShop] = useState(null); // For action dialog
+  const [actionShop, setActionShop] = useState(null);
   const [actionType, setActionType] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
   const [extendDays, setExtendDays] = useState(30);
+  const [quotaValue, setQuotaValue] = useState(1000);
+  // Edit profile state
+  const [editName, setEditName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  // Reset password state
+  const [newPass, setNewPass] = useState("");
 
   const authFetch = useCallback(async (url, opts = {}) => {
     const token = localStorage.getItem("token");
@@ -96,6 +102,21 @@ export default function ShopsManagementPage() {
     finally { setActionLoading(false); setActionShop(null); }
   };
 
+  const handleChangeQuota = async (shopId) => {
+    setActionLoading(true);
+    try {
+      const res = await authFetch(`${API}/api/admin/tenants/${shopId}/quota`, {
+        method: "PUT", body: JSON.stringify({ quota: Number(quotaValue) }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast({ title: "🤖 Đã cập nhật Quota", description: data.message });
+        setTenants(prev => prev.map(t => t.id === shopId ? { ...t, ai_quota_limit: Number(quotaValue) } : t));
+      } else toast({ title: "❌ Lỗi", description: data.error, variant: "destructive" });
+    } catch (e) { toast({ title: "❌ Lỗi", description: e.message, variant: "destructive" }); }
+    finally { setActionLoading(false); setActionShop(null); setActionType(""); }
+  };
+
   const handleChangePlan = async (shopId, plan) => {
     try {
       const res = await authFetch(`${API}/api/admin/tenants/${shopId}/plan`, {
@@ -107,6 +128,52 @@ export default function ShopsManagementPage() {
         setTenants(prev => prev.map(t => t.id === shopId ? { ...t, subscription_plan: plan.toUpperCase() } : t));
       } else toast({ title: "❌ Lỗi", description: data.error, variant: "destructive" });
     } catch (e) { toast({ title: "❌ Lỗi", description: e.message, variant: "destructive" }); }
+  };
+
+  const handleEditProfile = async (shopId) => {
+    if (!editName.trim() && !editEmail.trim()) return toast({ title: "⚠️ Nhập ít nhất 1 trường", variant: "destructive" });
+    setActionLoading(true);
+    try {
+      const res = await authFetch(`${API}/api/admin/tenants/${shopId}/profile`, {
+        method: "PATCH", body: JSON.stringify({ shop_name: editName, email: editEmail }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast({ title: "✏️ Đã cập nhật", description: data.message });
+        setTenants(prev => prev.map(t => t.id === shopId ? { ...t, shop_name: data.shop?.shop_name || t.shop_name, email: data.shop?.email || t.email } : t));
+        setActionShop(null); setActionType("");
+      } else toast({ title: "❌ Lỗi", description: data.error, variant: "destructive" });
+    } catch (e) { toast({ title: "❌ Lỗi", description: e.message, variant: "destructive" }); }
+    finally { setActionLoading(false); }
+  };
+
+  const handleResetPassword = async (shopId) => {
+    if (!newPass || newPass.length < 6) return toast({ title: "⚠️ Mật khẩu ít nhất 6 ký tự", variant: "destructive" });
+    setActionLoading(true);
+    try {
+      const res = await authFetch(`${API}/api/admin/tenants/${shopId}/reset-password`, {
+        method: "PATCH", body: JSON.stringify({ new_password: newPass }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast({ title: "🔑 Đã đặt lại mật khẩu", description: data.message });
+        setNewPass(""); setActionShop(null); setActionType("");
+      } else toast({ title: "❌ Lỗi", description: data.error, variant: "destructive" });
+    } catch (e) { toast({ title: "❌ Lỗi", description: e.message, variant: "destructive" }); }
+    finally { setActionLoading(false); }
+  };
+
+  const handleResetQuotaShop = async (shopId) => {
+    setActionLoading(true);
+    try {
+      const res = await authFetch(`${API}/api/admin/tenants/${shopId}/reset-quota`, { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        toast({ title: "🔄 Đã reset quota", description: data.message });
+        setTenants(prev => prev.map(t => t.id === shopId ? { ...t, ai_messages_used: 0 } : t));
+      } else toast({ title: "❌ Lỗi", description: data.error, variant: "destructive" });
+    } catch (e) { toast({ title: "❌ Lỗi", description: e.message, variant: "destructive" }); }
+    finally { setActionLoading(false); setActionShop(null); setActionType(""); }
   };
 
   // ═══ FILTER ═══
@@ -283,30 +350,38 @@ export default function ShopsManagementPage() {
 
                       {/* Actions */}
                       <td className="px-6 py-4 text-center">
-                        {t.role !== 'SUPER_ADMIN' && (
-                          <div className="flex items-center justify-center gap-1.5">
-                            {/* Extend */}
-                            <button onClick={() => { setActionShop(t); setActionType("extend"); setExtendDays(30); }}
-                              className="px-2 py-1 text-[10px] font-bold rounded-lg bg-zinc-800 text-blue-400 border border-zinc-700 hover:border-blue-500/30 hover:bg-blue-500/10 transition-all"
-                              title="Gia hạn">
-                              <Calendar className="w-3 h-3 inline mr-1" />Gia hạn
-                            </button>
+                        <div className="flex items-center justify-center gap-1.5">
+                          {/* Quota — hiện cho TẤT CẢ kể cả SUPER_ADMIN */}
+                          <button onClick={() => { setActionShop(t); setActionType("quota"); setQuotaValue(t.ai_quota_limit || 1000); }}
+                            className="px-2 py-1 text-[10px] font-bold rounded-lg bg-zinc-800 text-violet-400 border border-zinc-700 hover:border-violet-500/30 hover:bg-violet-500/10 transition-all"
+                            title="Sửa AI Quota">
+                            <SlidersHorizontal className="w-3 h-3 inline mr-1" />Quota
+                          </button>
 
-                            {status === 'ACTIVE' || status === 'TRIAL' ? (
-                              <button onClick={() => { setActionShop(t); setActionType("suspend"); }}
-                                className="px-2 py-1 text-[10px] font-bold rounded-lg bg-zinc-800 text-red-400 border border-zinc-700 hover:border-red-500/30 hover:bg-red-500/10 transition-all"
-                                title="Khóa">
-                                <Ban className="w-3 h-3 inline mr-1" />Khóa
+                          {t.role !== 'SUPER_ADMIN' && (
+                            <>
+                              <button onClick={() => { setActionShop(t); setActionType("extend"); setExtendDays(30); }}
+                                className="px-2 py-1 text-[10px] font-bold rounded-lg bg-zinc-800 text-blue-400 border border-zinc-700 hover:border-blue-500/30 hover:bg-blue-500/10 transition-all"
+                                title="Gia hạn">
+                                <Calendar className="w-3 h-3 inline mr-1" />Gia hạn
                               </button>
-                            ) : (
-                              <button onClick={() => handleActivate(t.id)}
-                                className="px-2 py-1 text-[10px] font-bold rounded-lg bg-zinc-800 text-emerald-400 border border-zinc-700 hover:border-emerald-500/30 hover:bg-emerald-500/10 transition-all"
-                                title="Mở khóa">
-                                <CheckCircle2 className="w-3 h-3 inline mr-1" />Mở khóa
-                              </button>
-                            )}
-                          </div>
-                        )}
+
+                              {status === 'ACTIVE' || status === 'TRIAL' ? (
+                                <button onClick={() => { setActionShop(t); setActionType("suspend"); }}
+                                  className="px-2 py-1 text-[10px] font-bold rounded-lg bg-zinc-800 text-red-400 border border-zinc-700 hover:border-red-500/30 hover:bg-red-500/10 transition-all"
+                                  title="Khóa">
+                                  <Ban className="w-3 h-3 inline mr-1" />Khóa
+                                </button>
+                              ) : (
+                                <button onClick={() => handleActivate(t.id)}
+                                  className="px-2 py-1 text-[10px] font-bold rounded-lg bg-zinc-800 text-emerald-400 border border-zinc-700 hover:border-emerald-500/30 hover:bg-emerald-500/10 transition-all"
+                                  title="Mở khóa">
+                                  <CheckCircle2 className="w-3 h-3 inline mr-1" />Mở khóa
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -357,6 +432,48 @@ export default function ShopsManagementPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Quota Edit Dialog */}
+      <Dialog open={actionType === "quota" && !!actionShop} onOpenChange={() => { setActionShop(null); setActionType(""); }}>
+        <DialogContent className="max-w-sm bg-zinc-900 border-zinc-800 text-white">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-violet-400">
+              <SlidersHorizontal className="w-5 h-5" /> Chỉnh AI Quota
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-zinc-400">
+              Shop: <strong className="text-white">&quot;{actionShop?.shop_name}&quot;</strong>
+            </p>
+            <div className="space-y-2">
+              <label className="text-xs text-zinc-500 font-medium">Số tin nhắn AI / tháng</label>
+              <input
+                type="number" min={0} max={100000} value={quotaValue}
+                onChange={e => setQuotaValue(Number(e.target.value))}
+                className="w-full px-4 py-2.5 bg-zinc-800 border border-zinc-700 rounded-xl text-sm text-zinc-200 outline-none focus:border-violet-500/50 transition-colors"
+              />
+              <div className="grid grid-cols-4 gap-2">
+                {[500, 1000, 2000, 10000].map(v => (
+                  <button key={v} onClick={() => setQuotaValue(v)}
+                    className={cn("py-1.5 text-[10px] font-bold rounded-lg border transition-all",
+                      quotaValue === v ? "bg-violet-500/20 text-violet-400 border-violet-500/30" : "bg-zinc-800 text-zinc-400 border-zinc-700 hover:border-zinc-600")}>
+                    {v >= 1000 ? `${v/1000}K` : v}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => { setActionShop(null); setActionType(""); }}
+                className="flex-1 py-2 text-xs font-bold text-zinc-400 bg-zinc-800 hover:bg-zinc-700 rounded-xl transition-colors">Hủy</button>
+              <button onClick={() => handleChangeQuota(actionShop.id)} disabled={actionLoading}
+                className="flex-1 py-2 text-xs font-bold text-white bg-violet-600 hover:bg-violet-700 rounded-xl transition-colors flex items-center justify-center gap-1.5">
+                {actionLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <SlidersHorizontal className="w-3 h-3" />}
+                {actionLoading ? "Đang lưu..." : "Lưu Quota"}
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Extend License Dialog */}
       <Dialog open={actionType === "extend" && !!actionShop} onOpenChange={() => { setActionShop(null); setActionType(""); }}>
         <DialogContent className="max-w-sm bg-zinc-900 border-zinc-800 text-white">
@@ -393,6 +510,102 @@ export default function ShopsManagementPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Edit Profile Dialog */}
+      <Dialog open={actionType === "edit" && !!actionShop} onOpenChange={() => { setActionShop(null); setActionType(""); }}>
+        <DialogContent className="max-w-sm bg-zinc-900 border-zinc-800 text-white">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-400">
+              <Pencil className="w-5 h-5" /> Sửa thông tin Shop
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-zinc-500">Shop #{actionShop?.id}</p>
+            <div className="space-y-1.5">
+              <label className="text-xs text-zinc-400 font-medium">Tên Shop</label>
+              <input value={editName} onChange={e => setEditName(e.target.value)}
+                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-sm text-zinc-200 outline-none focus:border-amber-500/50"
+                placeholder="Tên shop" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs text-zinc-400 font-medium">Email đăng nhập</label>
+              <input type="email" value={editEmail} onChange={e => setEditEmail(e.target.value)}
+                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-sm text-zinc-200 outline-none focus:border-amber-500/50"
+                placeholder="email@example.com" />
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => { setActionShop(null); setActionType(""); }}
+                className="flex-1 py-2 text-xs font-bold text-zinc-400 bg-zinc-800 hover:bg-zinc-700 rounded-xl transition-colors">Hủy</button>
+              <button onClick={() => handleEditProfile(actionShop.id)} disabled={actionLoading}
+                className="flex-1 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl transition-colors flex items-center justify-center gap-1.5">
+                {actionLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Pencil className="w-3 h-3" />}
+                {actionLoading ? "Đang lưu..." : "Lưu thay đổi"}
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset Password Dialog */}
+      <Dialog open={actionType === "reset-pass" && !!actionShop} onOpenChange={() => { setActionShop(null); setActionType(""); setNewPass(""); }}>
+        <DialogContent className="max-w-sm bg-zinc-900 border-zinc-800 text-white">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-orange-400">
+              <KeyRound className="w-5 h-5" /> Đặt lại mật khẩu
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-zinc-400">
+              Shop: <strong className="text-white">&quot;{actionShop?.shop_name}&quot;</strong> ({actionShop?.email})
+            </p>
+            <div className="space-y-1.5">
+              <label className="text-xs text-zinc-400 font-medium">Mật khẩu mới (ít nhất 6 ký tự)</label>
+              <input type="password" value={newPass} onChange={e => setNewPass(e.target.value)}
+                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-sm text-zinc-200 outline-none focus:border-orange-500/50"
+                placeholder="Nhập mật khẩu mới..." />
+            </div>
+            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3">
+              <p className="text-xs text-amber-400">⚠️ User sẽ cần đăng nhập lại bằng mật khẩu mới này.</p>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => { setActionShop(null); setActionType(""); setNewPass(""); }}
+                className="flex-1 py-2 text-xs font-bold text-zinc-400 bg-zinc-800 hover:bg-zinc-700 rounded-xl transition-colors">Hủy</button>
+              <button onClick={() => handleResetPassword(actionShop.id)} disabled={actionLoading}
+                className="flex-1 py-2 text-xs font-bold text-white bg-orange-600 hover:bg-orange-700 rounded-xl transition-colors flex items-center justify-center gap-1.5">
+                {actionLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <KeyRound className="w-3 h-3" />}
+                {actionLoading ? "Đang xử lý..." : "Đặt lại ngay"}
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset Quota Confirmation Dialog */}
+      <Dialog open={actionType === "reset-quota" && !!actionShop} onOpenChange={() => { setActionShop(null); setActionType(""); }}>
+        <DialogContent className="max-w-sm bg-zinc-900 border-zinc-800 text-white">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-emerald-400">
+              <RefreshCw className="w-5 h-5" /> Reset bộ đếm AI?
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-zinc-400">
+              Đặt lại bộ đếm AI về <strong className="text-white">0</strong> cho shop <strong className="text-white">&quot;{actionShop?.shop_name}&quot;</strong>.
+            </p>
+            <p className="text-xs text-zinc-500">Dùng khi bắt đầu kỳ billing mới.</p>
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => { setActionShop(null); setActionType(""); }}
+                className="flex-1 py-2 text-xs font-bold text-zinc-400 bg-zinc-800 hover:bg-zinc-700 rounded-xl transition-colors">Hủy</button>
+              <button onClick={() => handleResetQuotaShop(actionShop.id)} disabled={actionLoading}
+                className="flex-1 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors flex items-center justify-center gap-1.5">
+                {actionLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                {actionLoading ? "Đang xử lý..." : "Reset về 0"}
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }
