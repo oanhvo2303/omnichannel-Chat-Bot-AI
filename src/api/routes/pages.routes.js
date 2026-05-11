@@ -8,6 +8,153 @@ const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
 const router = express.Router();
 router.use(authMiddleware);
 
+const FB_API = 'https://graph.facebook.com/v21.0';
+
+/**
+ * Kiểm tra token có còn sống không + lấy thông tin page
+ */
+async function checkTokenHealth(pageId, accessToken) {
+  try {
+    const url = `${FB_API}/${pageId}?fields=id,name,fan_count&access_token=${encodeURIComponent(accessToken)}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const data = await res.json();
+    if (data.error) return { alive: false, error: data.error.message, code: data.error.code };
+    return { alive: true, name: data.name, fan_count: data.fan_count };
+  } catch (err) {
+    return { alive: false, error: err.message };
+  }
+}
+
+/**
+ * Kiểm tra webhook subscribed chưa
+ */
+async function checkWebhookSubscription(pageId, accessToken) {
+  try {
+    const url = `${FB_API}/${pageId}/subscribed_apps?access_token=${encodeURIComponent(accessToken)}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const data = await res.json();
+    if (data.error) return { subscribed: false, error: data.error.message };
+    const subscribed = Array.isArray(data.data) && data.data.length > 0;
+    const fields = data.data?.[0]?.subscribed_fields || [];
+    return { subscribed, fields };
+  } catch (err) {
+    return { subscribed: false, error: err.message };
+  }
+}
+
+/**
+ * Kiểm tra quyền của token
+ */
+async function checkPermissions(accessToken) {
+  const REQUIRED = ['pages_messaging', 'pages_read_engagement', 'pages_manage_metadata'];
+  try {
+    const url = `${FB_API}/me/permissions?access_token=${encodeURIComponent(accessToken)}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const data = await res.json();
+    if (data.error) return { ok: false, granted: [], missing: REQUIRED };
+    const granted = data.data?.filter(p => p.status === 'granted').map(p => p.permission) || [];
+    const missing = REQUIRED.filter(r => !granted.includes(r));
+    return { ok: missing.length === 0, granted, missing };
+  } catch (err) {
+    return { ok: false, granted: [], missing: REQUIRED, error: err.message };
+  }
+}
+
+/**
+ * GET /api/pages/health — Kiểm tra sức khỏe tất cả Fanpage của shop
+ * Chạy parallel checks cho từng page: token, webhook, permissions, last_message
+ */
+router.get('/health', async (req, res) => {
+  try {
+    const db = getDB();
+    const shopId = req.shop.shopId;
+
+    const pages = await db.all(
+      `SELECT id, page_id, page_name, platform, access_token, status, is_ai_active, connected_at
+       FROM ShopIntegrations
+       WHERE shop_id = ? AND platform LIKE 'facebook%' AND page_id IS NOT NULL
+       ORDER BY connected_at DESC`,
+      [shopId]
+    );
+
+    if (pages.length === 0) return res.json([]);
+
+    // Lấy tin nhắn cuối cùng nhận được cho mỗi page
+    const pageIds = pages.map(p => p.page_id);
+    const placeholders = pageIds.map(() => '?').join(',');
+    const lastMsgs = await db.all(
+      `SELECT page_id, MAX(created_at) as last_message_at
+       FROM Messages
+       WHERE shop_id = ? AND page_id IN (${placeholders})
+       GROUP BY page_id`,
+      [shopId, ...pageIds]
+    );
+    const lastMsgMap = Object.fromEntries(lastMsgs.map(m => [m.page_id, m.last_message_at]));
+
+    // Chạy parallel health checks cho tất cả pages
+    const healthResults = await Promise.all(pages.map(async (page) => {
+      const token = page.access_token;
+      const isConnected = page.status === 'connected';
+
+      if (!token || !isConnected) {
+        return {
+          id: page.id, page_id: page.page_id, page_name: page.page_name,
+          platform: page.platform, is_ai_active: page.is_ai_active,
+          connected_at: page.connected_at,
+          token_alive: false, token_error: 'Không có token hoặc chưa kết nối',
+          webhook_subscribed: false, webhook_fields: [],
+          permissions_ok: false, permissions_missing: [],
+          last_message_at: lastMsgMap[page.page_id] || null,
+          overall: 'disconnected',
+        };
+      }
+
+      // Parallel check token + webhook + permissions
+      const [tokenHealth, webhookHealth, permHealth] = await Promise.all([
+        checkTokenHealth(page.page_id, token),
+        checkWebhookSubscription(page.page_id, token),
+        checkPermissions(token),
+      ]);
+
+      const overall = !tokenHealth.alive ? 'error'
+        : !webhookHealth.subscribed ? 'warning'
+        : !permHealth.ok ? 'warning'
+        : 'healthy';
+
+      return {
+        id: page.id,
+        page_id: page.page_id,
+        page_name: page.page_name,
+        platform: page.platform,
+        is_ai_active: !!page.is_ai_active,
+        connected_at: page.connected_at,
+        // Token
+        token_alive: tokenHealth.alive,
+        token_error: tokenHealth.error || null,
+        token_error_code: tokenHealth.code || null,
+        fan_count: tokenHealth.fan_count || null,
+        // Webhook
+        webhook_subscribed: webhookHealth.subscribed,
+        webhook_fields: webhookHealth.fields || [],
+        webhook_error: webhookHealth.error || null,
+        // Permissions
+        permissions_ok: permHealth.ok,
+        permissions_granted: permHealth.granted || [],
+        permissions_missing: permHealth.missing || [],
+        // Activity
+        last_message_at: lastMsgMap[page.page_id] || null,
+        // Summary
+        overall,
+      };
+    }));
+
+    res.json(healthResults);
+  } catch (err) {
+    console.error('[PAGE HEALTH]', err.message);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
 /**
  * GET /api/pages — Danh sách Fanpage của shop (đọc từ ShopIntegrations)
  */
