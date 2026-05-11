@@ -7,7 +7,7 @@ import {
   MessageSquare, Bot, Package, Tags, Contact,
   BarChart3, Megaphone, ChevronLeft, ChevronRight, Zap, Sparkles,
   LogOut, Settings, PanelLeftClose, PanelLeft, Link2, Activity, Send, UserCog, ClipboardList, MessageSquareReply,
-  Crown, X
+  Crown, X, Images, HelpCircle,
 } from "lucide-react";
 
 const menuItems = [
@@ -20,6 +20,8 @@ const menuItems = [
   { type: "divider", label: "CÀI ĐẶT" },
   { id: "ai-settings", label: "Cài đặt AI", icon: Sparkles, href: "/settings/ai" },
   { id: "bot", label: "Kịch bản Bot", icon: Bot, href: "/settings/bot" },
+  { id: "faq", label: "FAQ / Kiến thức AI", icon: HelpCircle, href: "/settings/faq" },
+  { id: "media", label: "Thư viện Ảnh", icon: Images, href: "/settings/media" },
   { id: "auto-comment", label: "Auto Comment", icon: MessageSquareReply, href: "/settings/auto-comment" },
   { id: "products", label: "Sản phẩm & Kho", icon: Package, href: "/settings/products" },
   { id: "tags", label: "Quản lý Thẻ", icon: Tags, href: "/settings/tags" },
