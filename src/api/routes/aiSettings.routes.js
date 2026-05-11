@@ -104,13 +104,13 @@ router.patch('/', requireOwnerOrAdmin, async (req, res) => {
       );
       console.log(`[AI SETTINGS] Shop #${req.shop.shopId} đã cập nhật Gemini API Key (${CAN_ENCRYPT ? 'encrypted' : 'plaintext'}).`);
     }
-
     if (ai_quota_limit !== undefined) {
-      // P3 fix: tenant KHÔNG được tự set unlimited (-1) hoặc quota tuỳ ý
-      // Quota phải do billing/admin quản lý — clamp trong khoảng hợp lệ
+      // Quota tự quản lý cho shop (API key của riêng họ) — giới hạn rộng hơn
+      // Admin vẫn có thể set quota khác qua /api/admin/tenants/:id/quota
+      // 999999 = "unlimited" mode từ frontend khi user tắt giới hạn
       const quotaNum = parseInt(ai_quota_limit, 10);
-      if (!Number.isFinite(quotaNum) || quotaNum < 100 || quotaNum > 10000) {
-        return res.status(400).json({ error: 'Quota hợp lệ phải từ 100 đến 10,000 tin/tháng. Liên hệ admin để tăng giới hạn.' });
+      if (!Number.isFinite(quotaNum) || quotaNum < 1 || quotaNum > 999999) {
+        return res.status(400).json({ error: 'Quota hợp lệ phải từ 1 đến 999,999 tin/tháng.' });
       }
       await db.run(
         'UPDATE Shops SET ai_quota_limit = ? WHERE id = ?',

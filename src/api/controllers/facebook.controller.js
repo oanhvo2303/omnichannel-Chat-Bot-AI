@@ -803,20 +803,27 @@ ${knowledgeEntries.join('\n\n')}
           const hasToolCalls       = rawAnalysis.toolCalls?.length > 0;
           const isExplicitEscalate = ragResult.source === 'escalate'; // Gemini tự khai không biết
           const isVeryLowConf      = typeof effectiveConf === 'number' && effectiveConf <= 0.45;
-          // Hard escalate: (no reply + low conf/explicit) OR (Gemini tự khai dù đã có reply)
+          // noFaqMatch + reply dài + source bất kỳ → Gemini đang hallucinate (bịa thông tin shop)
+          const isHallucinatedLong = noFaqMatch && !isShortGreeting && !hasToolCalls && hasValidReply;
+          // Hard escalate:
+          // [A] không có reply hợp lệ + low conf/explicit escalate
+          // [B] Gemini tự khai không biết dù đã có reply
+          // [C] noFaqMatch + reply dài → hallucination risk
           const doHardEscalate = (!hasValidReply && !hasToolCalls && (isExplicitEscalate || isVeryLowConf))
-                               || (isExplicitEscalate && hasValidReply);
+                               || (isExplicitEscalate && hasValidReply)
+                               || isHallucinatedLong;
 
           if (doHardEscalate) {
-            console.log(`[RAG] ⚠️ Hard escalate #${customer.id}: source=${ragResult.source}, conf=${effectiveConf}, noFaq=${noFaqMatch}`);
+            const reason = isHallucinatedLong ? 'hallucination-no-faq' : ragResult.source === 'escalate' ? 'ai-self-escalate' : 'low-confidence';
+            console.log(`[RAG] 🚫 Hard escalate #${customer.id}: reason=${reason}, source=${ragResult.source}, conf=${effectiveConf}, noFaq=${noFaqMatch}, replyLen=${(rawAnalysis.reply||'').length}`);
             replyText = buildEscalationReply(customer.name);
             replyIntent = 'ESCALATE';
-            markNeedsHuman(customer.id, shop.id, escalation.reason);
+            markNeedsHuman(customer.id, shop.id, escalation.reason || reason);
           } else {
             replyText = ragResult.reply;
             replyIntent = ragResult.intent;
-            if (noFaqMatch && !isShortGreeting) {
-              console.log(`[RAG] ℹ️ noFaqMatch + short/greeting reply → giữ nguyên Gemini`);
+            if (noFaqMatch && isShortGreeting) {
+              console.log(`[RAG] ℹ️ noFaqMatch + short/greeting reply → giữ nguyên Gemini (an toàn)`);
             }
           }
 

@@ -636,7 +636,7 @@ CHÚ Ý VỀ PHONG CÁCH TIN NHẮN:
         // Chỉ parse JSON nếu response bắt đầu bằng '{' (strict signal)
         let intent = 'HỖ_TRỢ'; // default cho text response từ agentic model
         let reply = textResponse;
-        let confidence = 0.8; // Agentic model tự chọn trả text → có nghĩa là đủ tự tin
+        let confidence = 0.5; // Fix: unknown — agentModel không có JSON schema, không thể giả định tự tin
         let source = 'general';
 
         const trimmed = textResponse?.trim() || '';
@@ -651,7 +651,8 @@ CHÚ Ý VỀ PHONG CÁCH TIN NHẮN:
           } catch {
             // Parse fail → dùng raw text (an toàn hơn là lấy sai data)
             reply = textResponse;
-            console.warn('[GEMINI AGENTIC] JSON parse fail trên response bắt đầu bằng "{" → dùng raw text');
+            confidence = 0.4; // Parse fail → còn ít tin hơn
+            console.warn('[GEMINI AGENTIC] JSON parse fail trên response bắt đầu bằng "{" → dùng raw text, conf=0.4');
           }
         }
 
