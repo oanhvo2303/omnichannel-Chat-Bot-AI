@@ -109,22 +109,35 @@ async function processRemarketingJob(payload) {
       const pageToken = resolvePageToken(pageTokenMap, r);
       if (!pageToken) { failed++; continue; }
 
-      const fbRes = await fetch(
-        `https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            recipient: { id: r.platform_id },
-            message: image_url
-              ? { attachment: { type: 'image', payload: { url: image_url, is_reusable: true } } }
-              : { text: personalizedMsg },
-          }),
+      const fbBase = `https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`;
+      const headers = { 'Content-Type': 'application/json' };
+
+      // Bug 6 fix: Luôn gửi text trước, sau đó gửi ảnh riêng nếu có image_url
+      // (không dùng ternary: image_url ? chỉ ảnh : chỉ text)
+      const textRes = await fetch(fbBase, {
+        method: 'POST', headers,
+        body: JSON.stringify({
+          recipient: { id: r.platform_id },
+          message: { text: personalizedMsg },
+        }),
+      });
+      const textJson = await textRes.json();
+      if (textJson.error) {
+        failed++;
+        console.warn(`[QUEUE/REMARKETING] FB text err ${r.platform_id}:`, textJson.error.message);
+      } else {
+        sent++;
+        // Gửi ảnh bổ sung nếu có (không tính vào sent/failed riêng)
+        if (image_url) {
+          await fetch(fbBase, {
+            method: 'POST', headers,
+            body: JSON.stringify({
+              recipient: { id: r.platform_id },
+              message: { attachment: { type: 'image', payload: { url: image_url, is_reusable: true } } },
+            }),
+          }).catch(e => console.warn(`[QUEUE/REMARKETING] FB image err ${r.platform_id}:`, e.message));
         }
-      );
-      const json = await fbRes.json();
-      if (json.error) { failed++; console.warn(`[QUEUE/REMARKETING] FB err ${r.platform_id}:`, json.error.message); }
-      else sent++;
+      }
     } catch (e) {
       failed++;
       console.warn(`[QUEUE/REMARKETING] send err:`, e.message);

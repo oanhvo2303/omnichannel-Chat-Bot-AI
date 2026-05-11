@@ -81,7 +81,8 @@ async function retrieveFAQ(shopId, messageText, integrationId = null) {
     if (integrationId && faq.integration_ids) {
       try {
         const ids = JSON.parse(faq.integration_ids);
-        if (Array.isArray(ids) && ids.length > 0 && !ids.includes(integrationId)) {
+        // Bug 3 fix: coerce cả 2 về string để tránh number vs string mismatch
+        if (Array.isArray(ids) && ids.length > 0 && !ids.map(String).includes(String(integrationId))) {
           return { ...faq, score: -1 }; // Không thuộc page này → loại
         }
       } catch {}
@@ -155,12 +156,18 @@ Bạn PHẢI tuân theo các quy tắc sau khi trả lời:
  * Nếu không có confidence → mặc định 0.7 (assume OK).
  */
 function parseRAGResponse(rawResponse) {
-  // rawResponse có thể là string (text response) hoặc đã có confidence
+  // rawResponse có thể là object từ agenticAnalyzeMessage
   if (typeof rawResponse === 'object' && rawResponse !== null) {
+    // Bug 2 fix: null confidence = AI không trả về → dùng heuristic 0.7
+    // number confidence = AI trả về thật → dùng giá trị thật
+    const confidence = typeof rawResponse.confidence === 'number'
+      ? rawResponse.confidence
+      : 0.7; // heuristic fallback
+
     return {
       intent:     rawResponse.intent     || 'KHÁC',
       reply:      rawResponse.reply      || null,
-      confidence: typeof rawResponse.confidence === 'number' ? rawResponse.confidence : 0.7,
+      confidence,
       source:     rawResponse.source     || 'general',
       toolCalls:  rawResponse.toolCalls  || [],
       errorCode:  rawResponse.errorCode  || null,

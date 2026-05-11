@@ -687,7 +687,7 @@ ${knowledgeEntries.join('\n\n')}
             : ragInstructions;
 
           console.log(`[AI TRACE] 🤖 Gọi Gemini AGENTIC cho Khách #${customer.id} (${customer.name}) | History: ${historyRows.length} msgs | Products: ${products.length} | FAQs: ${ragCtx.relevantFaqs.length} | Knowledge: ${shop.bot_rules_mode === 'knowledge' ? rules.length + ' rules' : 'OFF'} | Key: ${shopLicense?.gemini_api_key ? 'SHOP' : 'GLOBAL'} | Quota: ${shopLicense?.ai_messages_used || 0}/${shopLicense?.ai_quota_limit || 0}`);
-          const rawAnalysis = await agenticAnalyzeMessage(enrichedSystemPrompt, messageText, historyRows, { shopId: shop.id, customerId: customer.id, customerName: customer.name, shopApiKey: shopLicense?.gemini_api_key || null }, enrichedCatalog, imageData);
+          const rawAnalysis = await agenticAnalyzeMessage(messageText, enrichedSystemPrompt, historyRows, { shopId: shop.id, customerId: customer.id, customerName: customer.name, shopApiKey: shopLicense?.gemini_api_key || null }, enrichedCatalog, imageData);
 
           // ★ RAG Confidence Guard
           const ragResult = parseRAGResponse(rawAnalysis);
@@ -905,6 +905,12 @@ ${knowledgeEntries.join('\n\n')}
     const botResult = await db.run(
       'INSERT INTO Messages (shop_id, customer_id, sender, sender_type, text, intent, type) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [shop.id, customer.id, 'bot', 'bot', replyText, replyIntent, 'inbox']
+    );
+
+    // Bug 4 fix: cập nhật last_bot_message_at để followupScheduler biết AI đã reply
+    await db.run(
+      `UPDATE Customers SET last_bot_message_at = CURRENT_TIMESTAMP WHERE id = ? AND shop_id = ?`,
+      [customer.id, shop.id]
     );
 
     if (io) {

@@ -26,12 +26,17 @@ const { getDB } = require('../../infra/database/sqliteConnection');
  */
 async function executeAIOrder(args, shopId, customerId) {
   const db = getDB();
-  const { product_name, quantity = 1, customer_phone, customer_address, customer_name } = args;
+  const { product_name, customer_phone, customer_address, customer_name } = args;
+
+  // Bug 5 fix: Validate quantity — phòng AI trả số âm/0/string/Infinity
+  let quantity = parseInt(args.quantity, 10);
+  if (!Number.isFinite(quantity) || quantity < 1) quantity = 1;
+  if (quantity > 999) quantity = 999; // Hard cap chống order ảo số lượng khủng
 
   console.log('═'.repeat(60));
   console.log('[ORDER EXECUTOR] 🤖 AI yêu cầu tạo đơn hàng');
   console.log(`[ORDER EXECUTOR]   📦 Shop #${shopId} | 👤 Khách #${customerId}`);
-  console.log(`[ORDER EXECUTOR]   🛍️  SP: "${product_name}" x${quantity}`);
+  console.log(`[ORDER EXECUTOR]   🛍️  SP: "${product_name}" x${quantity}${args.quantity != quantity ? ` (gốc: ${args.quantity} → clamped)` : ''}`);
   console.log(`[ORDER EXECUTOR]   👤 Tên người nhận: ${customer_name || '(dùng tên Facebook)'}`);
   console.log(`[ORDER EXECUTOR]   📱 SĐT: ${customer_phone}`);
   console.log(`[ORDER EXECUTOR]   📍 Địa chỉ: ${customer_address}`);

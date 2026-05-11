@@ -50,7 +50,9 @@ function getLimits(plan) {
 
 async function countPages(db, shopId) {
   const row = await db.get(
-    `SELECT COUNT(*) AS cnt FROM ShopIntegrations WHERE shop_id = ? AND platform = 'facebook' AND status = 'connected'`,
+    // Bug 7 fix: platform lưu dạng 'facebook_<pageId>' hoặc 'facebook'
+    `SELECT COUNT(*) AS cnt FROM ShopIntegrations
+     WHERE shop_id = ? AND (platform = 'facebook' OR platform LIKE 'facebook_%') AND status = 'connected'`,
     [shopId]
   );
   return row?.cnt ?? 0;
