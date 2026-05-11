@@ -740,7 +740,9 @@ async function processInboxMessage(pageId, senderId, messageText, imageData = nu
                 contentParts = [rule.response];
               }
 
-              const hasScript = (rule.steps && JSON.parse(rule.steps || '[]').length > 0) ? ` [SCRIPT_ID:${rule.id}]` : '';
+              // Fix Issue 3: JSON.parse unsafe → bọc try/catch, tránh crash pipeline
+              const safeSteps = (() => { try { return JSON.parse(rule.steps || '[]'); } catch { return []; } })();
+              const hasScript = (safeSteps.length > 0) ? ` [SCRIPT_ID:${rule.id}]` : '';
               return `📌${hasScript} Khi khách hỏi về "${rule.keywords}":\n${contentParts.map(c => `   → ${c}`).join('\n')}`;
             });
 
@@ -781,31 +783,40 @@ ${knowledgeEntries.join('\n\n')}
           const decryptedShopKey = _decryptShopApiKey(shopLicense?.gemini_api_key || null);
           const rawAnalysis = await agenticAnalyzeMessage(messageText, enrichedSystemPrompt, historyRows, { shopId: shop.id, customerId: customer.id, customerName: customer.name, shopApiKey: decryptedShopKey }, enrichedCatalog, imageData);
 
-          // ★ RAG Confidence Guard — chỉ escalate khi Gemini thực sự không có reply
-          const ragResult = parseRAGResponse(rawAnalysis);
+          // ★ Parse Gemini response
+          const ragResult  = parseRAGResponse(rawAnalysis);
           const escalation = shouldEscalate(ragResult);
 
-          // Fix 3: Escalation guard thông minh hơn
-          // Chỉ hard-escalate khi:
-          //   (A) Gemini tự khai source='escalate' — không biết trả lời
-          //   (B) confidence cực thấp (≤0.35) VÀ không có reply VÀ không có tool call
-          // Không escalate khi: Gemini có reply dài > 5 chars, dù confidence thấp
+          // Issue 4 — Hallucination guard: nếu không có FAQ nào match, Gemini thiếu grounded context
+          // agentModel text response mặc định confidence=0.8 → bypass escalation guard
+          // → apply penalty khi reply dài (chứa thông tin shop) mà không có FAQ để kiểm tra
+          const noFaqMatch       = ragCtx.noFaqMatch;
+          const isShortGreeting  = (rawAnalysis.reply || '').trim().length < 60;
+          let effectiveConf      = ragResult.confidence;
+          if (noFaqMatch && !rawAnalysis.toolCalls?.length && !isShortGreeting) {
+            effectiveConf = Math.min(effectiveConf, 0.45);
+            console.log(`[RAG] ⚠️ noFaqMatch + long reply → conf penalty ${ragResult.confidence}→${effectiveConf}`);
+          }
+
+          // Escalation logic
           const hasValidReply      = rawAnalysis.reply && rawAnalysis.reply.trim().length > 5;
           const hasToolCalls       = rawAnalysis.toolCalls?.length > 0;
-          const isExplicitEscalate = ragResult.source === 'escalate';
-          const isVeryLowConf      = typeof ragResult.confidence === 'number' && ragResult.confidence <= 0.35;
-          const doHardEscalate     = !hasValidReply && !hasToolCalls && (isExplicitEscalate || isVeryLowConf);
+          const isExplicitEscalate = ragResult.source === 'escalate'; // Gemini tự khai không biết
+          const isVeryLowConf      = typeof effectiveConf === 'number' && effectiveConf <= 0.45;
+          // Hard escalate: (no reply + low conf/explicit) OR (Gemini tự khai dù đã có reply)
+          const doHardEscalate = (!hasValidReply && !hasToolCalls && (isExplicitEscalate || isVeryLowConf))
+                               || (isExplicitEscalate && hasValidReply);
 
           if (doHardEscalate) {
-            console.log(`[RAG] ⚠️ Hard escalate #${customer.id}: source=${ragResult.source}, conf=${ragResult.confidence}`);
+            console.log(`[RAG] ⚠️ Hard escalate #${customer.id}: source=${ragResult.source}, conf=${effectiveConf}, noFaq=${noFaqMatch}`);
             replyText = buildEscalationReply(customer.name);
             replyIntent = 'ESCALATE';
             markNeedsHuman(customer.id, shop.id, escalation.reason);
           } else {
             replyText = ragResult.reply;
             replyIntent = ragResult.intent;
-            if (escalation.shouldEscalate && !doHardEscalate) {
-              console.log(`[RAG] ℹ️ Soft conf (${ragResult.confidence}) nhưng Gemini có reply → giữ nguyên`);
+            if (noFaqMatch && !isShortGreeting) {
+              console.log(`[RAG] ℹ️ noFaqMatch + short/greeting reply → giữ nguyên Gemini`);
             }
           }
 

@@ -123,9 +123,9 @@ function buildFAQContext(faqs) {
   return `
 ═══════════════════════════════════════════
 📚 CƠ SỞ KIẾN THỨC SHOP (NGUỒN SỰ THẬT — ƯU TIÊN CAO NHẤT):
-Các câu trả lời dưới đây là CHÍNH XÁCH do chủ shop cung cấp.
+Các câu trả lời dưới đây là CHÍNH XÁC do chủ shop cung cấp.
 TUYỆT ĐỐI dùng thông tin từ đây khi trả lời khách. KHÔNG tự bịa thêm.
-Nếu câu hỏi của khách KHÔNG có trong đây → trả về confidence thấp (< 0.5).
+Nếu câu hỏi của khách KHÔNG có trong đây → NGAY LẬP TỨC dùng source="escalate" và confidence=0.0.
 ═══════════════════════════════════════════
 ${entries}
 ═══════════════════════════════════════════`;
@@ -261,8 +261,11 @@ async function buildRAGContext(shopId, messageText, integrationId = null) {
 
   const faqContext      = buildFAQContext(relevantFaqs);
   const ragInstructions = buildRAGSystemInstructions();
+  // noFaqMatch: true khi không có FAQ nào khớp → controller sẽ áp dụng confidence penalty
+  // để ngăn AI trả lời bịa thông tin shop khi không có kiến thức cơ sở
+  const noFaqMatch = relevantFaqs.length === 0;
 
-  return { faqContext, ragInstructions, relevantFaqs };
+  return { faqContext, ragInstructions, relevantFaqs, noFaqMatch };
 }
 
 module.exports = {
