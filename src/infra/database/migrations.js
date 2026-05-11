@@ -120,6 +120,16 @@ const MIGRATIONS = [
       await db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_shop ON Jobs(shop_id, created_at DESC)`).catch(() => {});
     },
   },
+  {
+    version: 11,
+    name: 'add_faq_updated_at_column',
+    up: async (db) => {
+      // FAQ.updated_at thiếu trên DB cũ tạo trước khi column này được thêm vào schema
+      await tryAlter(db, "ALTER TABLE FAQ ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP");
+      // Backfill: cập nhật updated_at = created_at cho các row cũ
+      await db.exec("UPDATE FAQ SET updated_at = created_at WHERE updated_at IS NULL").catch(() => {});
+    },
+  },
 ];
 
 // ─── Helper ───────────────────────────────────────────────────
