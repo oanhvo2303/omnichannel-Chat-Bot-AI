@@ -126,7 +126,8 @@ const handleInstagramEvent = (req, res) => {
           );
 
           if (io) {
-            io.emit('new_message', {
+            // FIX: emit chỉ vào room của shop này — không leak sang tenant khác
+            io.to(String(shopId)).emit('new_message', {
               id: msgResult.lastID, shop_id: shopId, customer_id: customer.id,
               sender: 'customer', text: messageText, intent: null, timestamp: new Date().toISOString(),
             });
@@ -142,7 +143,8 @@ const handleInstagramEvent = (req, res) => {
           );
 
           if (io) {
-            io.emit('new_message', {
+            // FIX: emit chỉ vào room của shop này
+            io.to(String(shopId)).emit('new_message', {
               id: botResult.lastID, shop_id: shopId, customer_id: customer.id,
               sender: 'bot', text: analysis.reply, intent: analysis.intent, timestamp: new Date().toISOString(),
             });

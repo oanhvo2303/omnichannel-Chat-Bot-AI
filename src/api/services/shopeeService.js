@@ -27,11 +27,15 @@ function makeSign(path, timestamp) {
 /**
  * Tạo URL OAuth Shopee (redirect shop owner đến Shopee để cấp quyền)
  */
-function getShopeeAuthUrl(redirectUrl) {
+function getShopeeAuthUrl(redirectUrl, state = '') {
   const path = '/api/v2/shop/auth_partner';
   const timestamp = Math.floor(Date.now() / 1000);
   const sign = makeSign(path, timestamp);
-  return `${SHOPEE_HOST}${path}?partner_id=${PARTNER_ID}&timestamp=${timestamp}&sign=${sign}&redirect=${encodeURIComponent(redirectUrl)}`;
+  // Nhúng state vào redirect URL (Shopee sẽ pass-through params của redirect)
+  const redirectWithState = state
+    ? `${redirectUrl}?state=${encodeURIComponent(state)}`
+    : redirectUrl;
+  return `${SHOPEE_HOST}${path}?partner_id=${PARTNER_ID}&timestamp=${timestamp}&sign=${sign}&redirect=${encodeURIComponent(redirectWithState)}`;
 }
 
 /**

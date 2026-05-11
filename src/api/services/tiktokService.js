@@ -31,8 +31,9 @@ function makeSign(path, timestamp, params = {}) {
 /**
  * Tạo URL OAuth TikTok Shop
  */
-function getTikTokAuthUrl(redirectUrl) {
-  return `https://auth.tiktok-shops.com/oauth/authorize?app_key=${APP_KEY}&redirect_uri=${encodeURIComponent(redirectUrl)}&state=tiktok_oauth`;
+function getTikTokAuthUrl(redirectUrl, state = 'tiktok_oauth') {
+  // state là signed payload từ marketplace.routes.js — chứng thực CSRF
+  return `https://auth.tiktok-shops.com/oauth/authorize?app_key=${APP_KEY}&redirect_uri=${encodeURIComponent(redirectUrl)}&state=${encodeURIComponent(state)}`;
 }
 
 /**

@@ -12,6 +12,26 @@ const { sendCapiEvent } = require('../../services/facebookCapiService');
 // =============================================
 const PHONE_REGEX = /(?:\+84|0)(?:\s?\.?-?){0,1}(?:3[2-9]|5[2689]|7[06-9]|8[1-9]|9[0-9])(?:\s?\.?-?){0,1}\d(?:\s?\.?-?){0,1}\d(?:\s?\.?-?){0,1}\d(?:\s?\.?-?){0,1}\d(?:\s?\.?-?){0,1}\d(?:\s?\.?-?){0,1}\d(?:\s?\.?-?){0,1}\d/;
 
+// =============================================
+// Vision Helper — Fetch ảnh từ Facebook URL → base64 cho Gemini
+// =============================================
+async function fetchImageAsBase64(imageUrl) {
+  try {
+    const res = await fetch(imageUrl);
+    if (!res.ok) { console.warn(`[VISION] Không fetch được ảnh: HTTP ${res.status}`); return null; }
+    const contentType = res.headers.get('content-type') || 'image/jpeg';
+    const mimeType = contentType.split(';')[0].trim();
+    if (!mimeType.startsWith('image/')) { console.warn(`[VISION] Không phải ảnh: ${mimeType}`); return null; }
+    const arrayBuffer = await res.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+    console.log(`[VISION] ✅ Fetch ảnh OK: ${mimeType} | ${Math.round(arrayBuffer.byteLength / 1024)}KB`);
+    return { base64, mimeType };
+  } catch (err) {
+    console.error('[VISION] ❌ Lỗi fetch ảnh:', err.message);
+    return null;
+  }
+}
+
 /**
  * GET /webhook/facebook — Verification handshake
  */
@@ -25,6 +45,56 @@ const verifyWebhook = (req, res) => {
     return res.status(200).send(challenge);
   }
   return res.status(403).json({ error: 'Forbidden: Token mismatch.' });
+};
+
+/**
+ * Tách AI response thành nhiều tin nhắn dựa trên separator ---NEXT--- do AI tự chèn
+ */
+const splitAIResponse = (text) => {
+  if (!text) return [text];
+  if (!text.includes('---NEXT---')) return [text];
+  return text.split('---NEXT---').map(p => p.trim()).filter(Boolean);
+};
+
+/**
+ * Gửi ảnh qua Facebook Attachment API
+ */
+const sendImageAPI = async (recipientId, imageUrl, pageAccessToken) => {
+  if (!pageAccessToken || !imageUrl) return;
+  try {
+    const res = await fetch(`https://graph.facebook.com/v21.0/me/messages?access_token=${pageAccessToken}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recipient: { id: recipientId },
+        message: { attachment: { type: 'image', payload: { url: imageUrl, is_reusable: true } } },
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) console.error('[FB SEND] ❌ Lỗi gửi ảnh:', data.error?.message);
+    else console.log(`[FB SEND] 🖼️ Gửi ảnh → ${recipientId}`);
+  } catch (err) {
+    console.error('[FB SEND] ❌ Network error gửi ảnh:', err.message);
+  }
+};
+
+/**
+ * Gửi 1 phần tin nhắn (có thể chứa [IMG:url] tag + text)
+ */
+const sendMessagePart = async (recipientId, part, pageAccessToken) => {
+  // Tìm tất cả [IMG:url] trong phần này
+  const imgRegex = /\[IMG:(https?:\/\/[^\]]+)\]/g;
+  const imgs = [...part.matchAll(imgRegex)];
+  const textOnly = part.replace(imgRegex, '').trim();
+
+  // Gửi ảnh trước
+  for (const match of imgs) {
+    await sendImageAPI(recipientId, match[1], pageAccessToken);
+  }
+  // Gửi text sau (nếu có)
+  if (textOnly) {
+    await callSendAPI(recipientId, textOnly, pageAccessToken);
+  }
 };
 
 /**
@@ -44,6 +114,20 @@ const callSendAPI = async (recipientId, text, pageAccessToken) => {
   } catch (error) {
     console.error('[FB SEND] Network error:', error.message);
   }
+};
+
+/**
+ * Gửi typing indicator (dấu 3 chấm đang gõ) trên Messenger
+ */
+const sendTypingOn = async (recipientId, pageAccessToken) => {
+  if (!pageAccessToken) return;
+  try {
+    await fetch(`https://graph.facebook.com/v21.0/me/messages?access_token=${pageAccessToken}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient: { id: recipientId }, sender_action: 'typing_on' }),
+    });
+  } catch { /* silent */ }
 };
 
 /**
@@ -124,24 +208,34 @@ const handleIncomingEvent = (req, res) => {
     const pageId = entry.id;
 
     // ========== INBOX MESSAGES ==========
-    entry.messaging?.forEach((event) => {
+    entry.messaging?.forEach(async (event) => {
       const senderId = event.sender?.id;
       if (!senderId) return;
 
       let messageText = event.message?.text;
+      let imageData = null; // ★ VISION: imageData cho Gemini
 
       // ★ [QA FIX] Handle media messages (ảnh, sticker, video, audio)
       if (!messageText && event.message?.attachments?.length > 0) {
         const att = event.message.attachments[0];
         const typeMap = { image: 'Ảnh', video: 'Video', audio: 'Audio', file: 'File', fallback: 'Link' };
         const label = typeMap[att.type] || att.type;
-        messageText = `[${label}] ${att.payload?.url || ''}`;
+
+        if (att.type === 'image' && att.payload?.url) {
+          // ★ VISION: Fetch ảnh để Gemini đọc nội dung
+          imageData = await fetchImageAsBase64(att.payload.url);
+          messageText = imageData
+            ? '[Khách gửi ảnh - AI đang phân tích nội dung ảnh...]'
+            : `[Ảnh] ${att.payload.url}`;
+        } else {
+          messageText = `[${label}] ${att.payload?.url || ''}`;
+        }
       }
 
       if (!messageText) return; // postback hoặc event lạ → bỏ qua an toàn
 
-      console.log(`[FB INBOX] Page ${pageId} | From ${senderId}: "${messageText.substring(0, 120)}"`);
-      processInboxMessage(pageId, senderId, messageText);
+      console.log(`[FB INBOX] Page ${pageId} | From ${senderId}: "${messageText.substring(0, 120)}"${imageData ? ' 🖼️ +Vision' : ''}`);
+      processInboxMessage(pageId, senderId, messageText, imageData);
     });
 
     // ========== FEED COMMENTS ==========
@@ -265,7 +359,7 @@ async function getOrCreateCustomer(db, shop, senderId, pageId, providedName = nu
 /**
  * Pipeline xử lý tin nhắn Inbox (giữ nguyên logic cũ)
  */
-async function processInboxMessage(pageId, senderId, messageText) {
+async function processInboxMessage(pageId, senderId, messageText, imageData = null) {
   const pipelineStart = Date.now();
   console.log('═'.repeat(70));
   console.log(`[INBOX PIPELINE] 🚀 BẮT ĐẦU XỬ LÝ TIN NHẮN MỚI`);
@@ -282,7 +376,7 @@ async function processInboxMessage(pageId, senderId, messageText) {
     // Nâng cấp Module 3: Truy vấn bảng ShopIntegrations để tìm page_id này thuộc shop nào
     // Hỗ trợ Multi-Page: Dùng LIKE thay vì '=' để match được platform 'facebook_pageId'
     const integration = await db.get(
-      "SELECT shop_id, access_token, is_ai_active, ai_system_prompt FROM ShopIntegrations WHERE page_id = ? AND platform LIKE 'facebook%' AND status = 'connected'",
+      "SELECT id, shop_id, access_token, is_ai_active, ai_system_prompt, bot_rules_mode, ai_full_history FROM ShopIntegrations WHERE page_id = ? AND platform LIKE 'facebook%' AND status = 'connected'",
       [pageId]
     );
     if (!integration) {
@@ -291,11 +385,14 @@ async function processInboxMessage(pageId, senderId, messageText) {
     }
     const shop = { 
       id: integration.shop_id, 
+      integration_id: integration.id,
       page_access_token: integration.access_token,
       is_ai_active: integration.is_ai_active,
-      ai_system_prompt: integration.ai_system_prompt
+      ai_system_prompt: integration.ai_system_prompt,
+      bot_rules_mode: integration.bot_rules_mode || 'keyword',
+      ai_full_history: integration.ai_full_history === 1
     };
-    console.log(`[AI TRACE] ✅ Tìm thấy Shop #${shop.id} | is_ai_active = ${shop.is_ai_active} (${shop.is_ai_active === 1 ? 'BẬT' : 'TẮT'}) | has_system_prompt = ${!!shop.ai_system_prompt}`);
+    console.log(`[AI TRACE] ✅ Tìm thấy Shop #${shop.id} | is_ai_active = ${shop.is_ai_active} (${shop.is_ai_active === 1 ? 'BẬT' : 'TẮT'}) | bot_rules_mode = ${shop.bot_rules_mode} | full_history = ${shop.ai_full_history ? '✅ BẬT' : '❌ TẮT'} | has_system_prompt = ${!!shop.ai_system_prompt}`);
 
     const customer = await getOrCreateCustomer(db, shop, senderId, pageId);
     if (!customer) return;
@@ -352,34 +449,44 @@ async function processInboxMessage(pageId, senderId, messageText) {
       }
     }
 
-    // ★ Step 1: Check Keyword Bot Rules FIRST (tiết kiệm API Gemini)
-    const rules = await db.all('SELECT * FROM BotRules WHERE shop_id = ? AND is_active = 1', [shop.id]);
+    // ★ Step 1: Check Bot Rules Mode
+    const rules = await db.all('SELECT * FROM BotRules WHERE shop_id = ? AND is_active = 1 AND (integration_id = ? OR integration_id IS NULL)', [shop.id, shop.integration_id]);
     let keywordReply = null;
     let keywordReplyType = 'text';
     let keywordMediaUrl = null;
     let matchedRule = null;
 
+    // ═══════════════════════════════════════════════════
+    // MODE: KEYWORD → Match từ khóa cứng (behavior cũ)
+    // MODE: KNOWLEDGE → Skip keyword, inject rules vào AI
+    // ═══════════════════════════════════════════════════
     const lowerText = messageText.toLowerCase();
-    for (const rule of rules) {
-      const keywords = rule.keywords.split(',').map((k) => k.trim().toLowerCase());
-      let matched = false;
+    if (shop.bot_rules_mode === 'keyword') {
+      // --- Mode Keyword: Giữ nguyên logic match từ khóa ---
+      for (const rule of rules) {
+        const keywords = rule.keywords.split(',').map((k) => k.trim().toLowerCase());
+        let matched = false;
 
-      for (const kw of keywords) {
-        if (!kw) continue;
-        if (rule.match_type === 'exact' && lowerText === kw) matched = true;
-        else if (rule.match_type === 'startswith' && lowerText.startsWith(kw)) matched = true;
-        else if (rule.match_type === 'contains' && lowerText.includes(kw)) matched = true;
-        if (matched) break;
-      }
+        for (const kw of keywords) {
+          if (!kw) continue;
+          if (rule.match_type === 'exact' && lowerText === kw) matched = true;
+          else if (rule.match_type === 'startswith' && lowerText.startsWith(kw)) matched = true;
+          else if (rule.match_type === 'contains' && lowerText.includes(kw)) matched = true;
+          if (matched) break;
+        }
 
-      if (matched) {
-        matchedRule = rule;
-        keywordReply = rule.response;
-        keywordReplyType = rule.response_type || 'text';
-        keywordMediaUrl = rule.media_url || null;
-        console.log(`[BOT RULES] ✅ Match "${rule.keywords}" → ${rule.steps ? 'MULTI-STEP' : 'single reply'} (skip AI)`);
-        break;
+        if (matched) {
+          matchedRule = rule;
+          keywordReply = rule.response;
+          keywordReplyType = rule.response_type || 'text';
+          keywordMediaUrl = rule.media_url || null;
+          console.log(`[BOT RULES] ✅ Match "${rule.keywords}" → ${rule.steps ? 'MULTI-STEP' : 'single reply'} (skip AI)`);
+          break;
+        }
       }
+    } else {
+      // --- Mode Knowledge: 100% AI xử lý. Rules inject vào prompt, AI tự quyết định ---
+      console.log(`[BOT RULES] 🧠 Mode=KNOWLEDGE → 100% AI. ${rules.length} rules inject vào prompt.`);
     }
 
     let replyText, replyIntent;
@@ -468,12 +575,17 @@ async function processInboxMessage(pageId, senderId, messageText) {
           return;
         }
 
-        // Lấy 5 tin nhắn gần nhất làm context
+        // ★ Hiển thị "đang gõ..." trên Messenger để khách biết đang được phản hồi
+        await sendTypingOn(senderId, shop.page_access_token);
+
+        // ★ Lấy lịch sử hội thoại — Full History Mode hoặc 10 tin gần nhất
+        const HISTORY_LIMIT = shop.ai_full_history ? 300 : 10;
         const historyRows = await db.all(
-          "SELECT sender, text FROM Messages WHERE customer_id = ? ORDER BY timestamp DESC LIMIT 10",
-          [customer.id]
+          "SELECT sender, text FROM Messages WHERE customer_id = ? ORDER BY timestamp DESC LIMIT ?",
+          [customer.id, HISTORY_LIMIT]
         );
         historyRows.reverse();
+        console.log(`[AI TRACE] 📜 History mode: ${shop.ai_full_history ? 'FULL (' + historyRows.length + ' msgs)' : 'COMPACT (' + historyRows.length + '/10 msgs)'}`);
 
         // ★ Inject danh sách sản phẩm vào prompt để AI biết shop bán gì
         const products = await db.all(
@@ -497,17 +609,69 @@ async function processInboxMessage(pageId, senderId, messageText) {
             }).join('\n')
           : '(Chưa có sản phẩm trong kho)';
 
+        // ★ Inject shipping settings vào catalog để AI tính phí ship chính xác
+        const shipSettings = await db.get('SELECT default_shipping_fee, free_shipping_threshold, free_shipping_min_quantity FROM Shops WHERE id = ?', [shop.id]);
+        const defaultShip = shipSettings?.default_shipping_fee || 30000;
+        const freeThreshold = shipSettings?.free_shipping_threshold || 0;
+        const freeMinQty = shipSettings?.free_shipping_min_quantity || 0;
+
+        let freeshipRules = [];
+        if (freeThreshold > 0) freeshipRules.push(`đơn từ ${freeThreshold.toLocaleString()}đ trở lên`);
+        if (freeMinQty > 0) freeshipRules.push(`mua từ ${freeMinQty} sản phẩm trở lên`);
+
+        const shippingInfo = `\n\n📦 CÀI ĐẶT PHÍ SHIP:\n- Phí ship mặc định: ${defaultShip.toLocaleString()}đ\n${freeshipRules.length > 0 ? `- 🎉 MIỄN PHÍ SHIP khi: ${freeshipRules.join(' HOẶC ')}\n- Thỏa 1 trong các điều kiện trên → Ship = 🎉 Miễn phí` : '- Không có điều kiện miễn phí ship'}\nBẮT BUỘC sử dụng thông tin này khi lên bảng tính tiền cho khách.`;
+
         // ═══ AI QUOTA ENFORCEMENT ═══
-        const shopLicense = await db.get('SELECT license_status, ai_quota_limit, ai_messages_used FROM Shops WHERE id = ?', [shop.id]);
+        const shopLicense = await db.get('SELECT license_status, ai_quota_limit, ai_messages_used, gemini_api_key FROM Shops WHERE id = ?', [shop.id]);
         if (shopLicense && shopLicense.license_status !== 'ACTIVE' && shopLicense.license_status !== 'TRIAL') {
           console.log(`[AI] ⛔ Shop #${shop.id} license=${shopLicense.license_status} — AI disabled`);
           replyText = 'Xin lỗi, hệ thống chatbot tạm thời không khả dụng. Vui lòng liên hệ chủ shop.';
-        } else if (shopLicense && shopLicense.ai_messages_used >= shopLicense.ai_quota_limit) {
+        } else if (shopLicense && shopLicense.ai_quota_limit > 0 && shopLicense.ai_messages_used >= shopLicense.ai_quota_limit) {
+          // Quota limit > 0 = có giới hạn. Nếu <= 0 = unlimited, skip check.
           console.log(`[AI] ⛔ Shop #${shop.id} quota exceeded: ${shopLicense.ai_messages_used}/${shopLicense.ai_quota_limit}`);
           replyText = 'Xin lỗi, hệ thống chatbot tạm thời bận. Nhân viên sẽ hỗ trợ bạn sớm nhất!';
         } else {
-          console.log(`[AI TRACE] 🤖 Gọi Gemini AGENTIC cho Khách #${customer.id} (${customer.name}) | History: ${historyRows.length} msgs | Products: ${products.length} | Quota: ${shopLicense?.ai_messages_used || 0}/${shopLicense?.ai_quota_limit || 0}`);
-          const analysis = await agenticAnalyzeMessage(messageText, shop.ai_system_prompt, historyRows, { shopId: shop.id, customerId: customer.id, customerName: customer.name }, productCatalog);
+          // ═══ KNOWLEDGE BASE: Inject Bot Rules vào AI prompt (nếu mode=knowledge) ═══
+          let knowledgeBase = '';
+          if (shop.bot_rules_mode === 'knowledge' && rules.length > 0) {
+            const knowledgeEntries = rules.map(rule => {
+              // Parse steps nếu có
+              let contentParts = [];
+              try {
+                const steps = rule.steps ? JSON.parse(rule.steps) : null;
+                if (steps && Array.isArray(steps) && steps.length > 0) {
+                  contentParts = steps.filter(s => s.text && s.text.trim()).map(s => s.text.trim());
+                }
+              } catch { /* parse error */ }
+
+              // Fallback: dùng response nếu không có steps
+              if (contentParts.length === 0 && rule.response) {
+                contentParts = [rule.response];
+              }
+
+              const hasScript = (rule.steps && JSON.parse(rule.steps || '[]').length > 0) ? ` [SCRIPT_ID:${rule.id}]` : '';
+              return `📌${hasScript} Khi khách hỏi về "${rule.keywords}":\n${contentParts.map(c => `   → ${c}`).join('\n')}`;
+            });
+
+            knowledgeBase = `
+═══════════════════════════════
+KHO KIẾN THỨC CỦA SHOP (Tham khảo để trả lời):
+Dưới đây là các câu trả lời mẫu. Mục nào có [SCRIPT_ID:X] nghĩa là CÓ kịch bản multi-step sẵn → KHI khách hỏi về chủ đề đó, BẮT BUỘC gọi execute_bot_script(rule_id=X) để hệ thống gửi kịch bản. KHÔNG tự viết lại nội dung.
+═══════════════════════════════
+${knowledgeEntries.join('\n\n')}
+═══════════════════════════════`;
+
+            console.log(`[AI TRACE] 🧠 Knowledge Base injected: ${rules.length} rules → ${knowledgeBase.length} chars`);
+          }
+
+          // Merge knowledge base + shipping info vào product catalog
+          const catalogWithShipping = `${productCatalog}${shippingInfo}`;
+          const enrichedCatalog = knowledgeBase
+            ? `${catalogWithShipping}\n\n${knowledgeBase}`
+            : catalogWithShipping;
+
+          console.log(`[AI TRACE] 🤖 Gọi Gemini AGENTIC cho Khách #${customer.id} (${customer.name}) | History: ${historyRows.length} msgs | Products: ${products.length} | Knowledge: ${shop.bot_rules_mode === 'knowledge' ? rules.length + ' rules' : 'OFF'} | Key: ${shopLicense?.gemini_api_key ? 'SHOP' : 'GLOBAL'} | Quota: ${shopLicense?.ai_messages_used || 0}/${shopLicense?.ai_quota_limit || 0}`);
+          const analysis = await agenticAnalyzeMessage(messageText, shop.ai_system_prompt, historyRows, { shopId: shop.id, customerId: customer.id, customerName: customer.name, shopApiKey: shopLicense?.gemini_api_key || null }, enrichedCatalog, imageData);
           replyText = analysis.reply;
           replyIntent = analysis.intent;
 
@@ -532,6 +696,38 @@ async function processInboxMessage(pageId, senderId, messageText) {
                   timestamp: new Date().toISOString(),
                 });
                 console.log(`[AI TRACE] 📡 Đã emit 'ai_order_created' → Dashboard (Room: Shop #${shop.id})`);
+              }
+
+              // ★★★ GỬI MẪU HÓA ĐƠN CHUYÊN NGHIỆP CHO KHÁCH ★★★
+              if (call.result.billTemplate) {
+                try {
+                  // 1. Gửi qua Messenger
+                  await callSendAPI(senderId, call.result.billTemplate, shop.page_access_token);
+                  console.log(`[AI TRACE] 🧾 Đã gửi mẫu hóa đơn Đơn #${call.result.orderId} cho khách qua Messenger`);
+
+                  // 2. Lưu vào DB để hiện trong chat dashboard
+                  const billResult = await db.run(
+                    'INSERT INTO Messages (shop_id, customer_id, sender, sender_type, text, intent, type) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    [shop.id, customer.id, 'bot', 'system', call.result.billTemplate, 'bill', 'inbox']
+                  );
+
+                  // 3. Emit qua Socket cho Dashboard
+                  if (io) {
+                    io.to(String(shop.id)).emit('new_message', {
+                      id: billResult.lastID,
+                      shop_id: shop.id,
+                      customer_id: customer.id,
+                      sender: 'bot',
+                      sender_type: 'system',
+                      text: call.result.billTemplate,
+                      intent: 'bill',
+                      type: 'inbox',
+                      timestamp: new Date().toISOString(),
+                    });
+                  }
+                } catch (billErr) {
+                  console.error(`[AI TRACE] ⚠️ Lỗi gửi hóa đơn:`, billErr.message);
+                }
               }
             }
 
@@ -580,6 +776,44 @@ async function processInboxMessage(pageId, senderId, messageText) {
                 });
               }
             }
+
+            // ★★★ EXECUTE BOT SCRIPT: AI chọn kịch bản → hệ thống gửi multi-step ★★★
+            if (call.name === 'execute_bot_script' && call.result?.success) {
+              const ruleId = call.args?.rule_id || call.result?.rule_id;
+              console.log(`[AI TRACE] 📜 AI chọn kịch bản ID #${ruleId} → Tìm và thực thi multi-step...`);
+
+              // Tìm rule trực tiếp bằng ID (AI đã biết ID từ Kho Kiến Thức)
+              let matchedScriptRule = null;
+              if (ruleId) {
+                matchedScriptRule = await db.get('SELECT * FROM BotRules WHERE id = ? AND shop_id = ? AND is_active = 1', [ruleId, shop.id]);
+              }
+
+              if (matchedScriptRule && matchedScriptRule.steps) {
+                let parsedSteps = null;
+                try { parsedSteps = JSON.parse(matchedScriptRule.steps); } catch { parsedSteps = null; }
+
+                if (parsedSteps && Array.isArray(parsedSteps) && parsedSteps.length > 0) {
+                  const { executeBotSteps } = require('../../services/bot/botStepExecutor');
+                  executeBotSteps({
+                    steps: parsedSteps,
+                    senderId,
+                    pageAccessToken: shop.page_access_token,
+                    shopId: shop.id,
+                    customerId: customer.id,
+                    io,
+                    ruleKeyword: matchedScriptRule.keywords,
+                  }).catch((err) => {
+                    console.error('[BOT STEP] ❌ Script executor crash:', err.message);
+                  });
+
+                  console.log(`[AI TRACE] ✅ Kịch bản "${matchedScriptRule.keywords}" → ${parsedSteps.length} bước (fire-and-forget)`);
+                  console.log(`[INBOX PIPELINE] ⏱️ Pipeline kết thúc sau ${Date.now() - pipelineStart}ms (AI → bot script)`);
+                  return; // DỪNG — botStepExecutor tự gửi + lưu DB
+                }
+              }
+
+              console.log(`[AI TRACE] ⚠️ Không tìm thấy kịch bản ID #${ruleId} → AI tự trả lời`);
+            }
           }
         }
 
@@ -608,10 +842,25 @@ async function processInboxMessage(pageId, senderId, messageText) {
           console.log(`[INBOX PIPELINE] ⏱️ Pipeline kết thúc sau ${Date.now() - pipelineStart}ms (AI ERROR — không gửi FB)`);
           return; // DỪNG — không gửi tin cho khách, không lưu bot message
         }
-        } // end else (AI quota OK)
 
         console.log(`[AI TRACE] ✅ AI trả lời thành công: Intent=${replyIntent} | Reply="${replyText?.substring(0, 60)}..."`);
-        await callSendAPI(senderId, replyText, shop.page_access_token);
+        
+        // ★★★ TÁCH AI RESPONSE THÀNH NHIỀU TIN NHẮN GỬI TUẦN TỰ ★★★
+        const messageParts = splitAIResponse(replyText);
+        
+        for (let i = 0; i < messageParts.length; i++) {
+          const part = messageParts[i];
+          if (i > 0) {
+            // Typing indicator + delay giữa các tin
+            await sendTypingOn(senderId, shop.page_access_token);
+            const typingDelay = Math.min(Math.max(part.length * 30, 800), 3000);
+            await new Promise(r => setTimeout(r, typingDelay));
+          }
+          await callSendAPI(senderId, part, shop.page_access_token);
+        }
+        console.log(`[AI TRACE] 📨 Đã gửi ${messageParts.length} tin nhắn riêng biệt`);
+
+        } // end else (AI quota OK)
       } else {
         // AI không tự động chạy, chỉ lưu tin nhắn vào để Sale đọc
         console.log(`[AI TRACE] 🚫 AI KHÔNG CHẠY: shop.is_ai_active = ${shop.is_ai_active} (OFF). Chỉ lưu tin nhắn để Sale đọc.`);
@@ -648,18 +897,12 @@ async function processInboxMessage(pageId, senderId, messageText) {
     console.error('═'.repeat(70));
 
     // Emit lỗi pipeline lên Dashboard
+    // Lưu ý: không biết shop_id ở đây (lỗi xảy ra trước khi resolve shop) — chỉ log, không global emit
     try {
       const io = getIO();
-      if (io) {
-        // Không biết shop_id ở đây nên broadcast cho tất cả
-        io.emit('ai_error', {
-          error_code: 'PIPELINE_CRASH',
-          error_message: `Lỗi nghiêm trọng trong xử lý tin nhắn: ${error.message}`,
-          original_message: messageText?.substring(0, 200),
-          timestamp: new Date().toISOString(),
-        });
-      }
-    } catch { /* không để emit lỗi crash thêm */ }
+      // Không có shopId → không thể room-scope → chỉ log lỗi vào server log thôi
+      console.error('[PIPELINE CRASH EMIT] Không thể emit ai_error do chưa có shopId. Xem server log để debug.');
+    } catch { /* chống crash thêm */ }
   }
 }
 

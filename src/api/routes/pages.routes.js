@@ -7,78 +7,128 @@ const { authMiddleware } = require('../middlewares/authMiddleware');
 const router = express.Router();
 router.use(authMiddleware);
 
-/** GET /api/pages — Danh sách Fanpage của shop */
+/**
+ * GET /api/pages — Danh sách Fanpage của shop (đọc từ ShopIntegrations)
+ */
 router.get('/', async (req, res) => {
   try {
     const db = getDB();
     const pages = await db.all(
-      "SELECT id, page_id, page_name, platform, status as is_active, connected_at as created_at FROM ShopIntegrations WHERE shop_id = ? AND platform LIKE 'facebook%' ORDER BY connected_at DESC",
+      `SELECT id, page_id, page_name, platform, status as is_active, connected_at as created_at
+       FROM ShopIntegrations
+       WHERE shop_id = ? AND platform LIKE 'facebook%'
+       ORDER BY connected_at DESC`,
       [req.shop.shopId]
     );
-    // map status connected -> is_active 1
+    // Map status 'connected' → is_active: 1 cho frontend
     res.json(pages.map(p => ({ ...p, is_active: p.is_active === 'connected' ? 1 : 0 })));
   } catch (error) {
+    console.error('[PAGES GET]', error.message);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
-/** POST /api/pages — Thêm Fanpage mới (manual hoặc sau OAuth) */
+/**
+ * POST /api/pages — Thêm Fanpage thủ công (manual token)
+ *
+ * FIX: Ghi vào ShopIntegrations (nguồn sự thật duy nhất),
+ * thay vì Pages table cũ. Webhook và GET đều đọc ShopIntegrations.
+ */
 router.post('/', async (req, res) => {
   try {
     const { page_id, page_name, page_access_token, platform } = req.body;
-    if (!page_id || !page_access_token) return res.status(400).json({ error: 'page_id và page_access_token là bắt buộc.' });
 
-    const db = getDB();
-    const shopId = req.shop.shopId;
-
-    // Upsert
-    const existing = await db.get('SELECT id FROM Pages WHERE shop_id = ? AND page_id = ?', [shopId, page_id]);
-    if (existing) {
-      await db.run('UPDATE Pages SET page_name = ?, page_access_token = ?, platform = ?, is_active = 1 WHERE id = ?',
-        [page_name || 'Facebook Page', page_access_token, platform || 'facebook', existing.id]);
-      return res.json({ message: 'Đã cập nhật Fanpage.', id: existing.id });
+    if (!page_id || !page_access_token) {
+      return res.status(400).json({ error: 'page_id và page_access_token là bắt buộc.' });
     }
 
-    const result = await db.run(
-      'INSERT INTO Pages (shop_id, page_id, page_name, page_access_token, platform) VALUES (?, ?, ?, ?, ?)',
-      [shopId, page_id, page_name || 'Facebook Page', page_access_token, platform || 'facebook']
+    const db      = getDB();
+    const shopId  = req.shop.shopId;
+    const pName   = page_name || 'Facebook Page';
+    const plat    = platform || 'facebook';
+
+    // Platform key theo chuẩn đa Fanpage: facebook_<pageId>
+    const platformKey = `${plat}_${page_id}`;
+
+    // Upsert vào ShopIntegrations — consistent với OAuth flow
+    await db.run(`
+      INSERT INTO ShopIntegrations (shop_id, platform, access_token, page_name, page_id, status, connected_at)
+      VALUES (?, ?, ?, ?, ?, 'connected', CURRENT_TIMESTAMP)
+      ON CONFLICT(shop_id, platform)
+      DO UPDATE SET
+        access_token = excluded.access_token,
+        page_name    = excluded.page_name,
+        page_id      = excluded.page_id,
+        status       = 'connected',
+        connected_at = CURRENT_TIMESTAMP
+    `, [shopId, platformKey, page_access_token, pName, page_id]);
+
+    // Lấy row vừa upsert để trả về id
+    const row = await db.get(
+      'SELECT id FROM ShopIntegrations WHERE shop_id = ? AND platform = ?',
+      [shopId, platformKey]
     );
 
-    // Cũng cập nhật Shops.facebook_page_id nếu là page đầu tiên
-    const count = await db.get('SELECT COUNT(*) as c FROM Pages WHERE shop_id = ?', [shopId]);
-    if (count.c === 1) {
-      await db.run('UPDATE Shops SET facebook_page_id = ?, page_access_token = ? WHERE id = ?',
-        [page_id, page_access_token, shopId]);
+    // Cũng cập nhật Shops.facebook_page_id (legacy) nếu chưa có
+    const shopRow = await db.get('SELECT facebook_page_id FROM Shops WHERE id = ?', [shopId]);
+    if (!shopRow?.facebook_page_id) {
+      await db.run(
+        'UPDATE Shops SET facebook_page_id = ?, page_access_token = ? WHERE id = ?',
+        [page_id, page_access_token, shopId]
+      );
     }
 
-    console.log(`[PAGES] ✅ Thêm page "${page_name}" (${page_id}) cho Shop #${shopId}`);
-    res.status(201).json({ id: result.lastID, page_id, page_name });
+    console.log(`[PAGES] ✅ Upsert page "${pName}" (${page_id}) vào ShopIntegrations cho Shop #${shopId}`);
+    res.status(201).json({ id: row?.id, page_id, page_name: pName });
   } catch (error) {
-    console.error('[PAGES]', error.message);
+    console.error('[PAGES POST]', error.message);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
-/** PUT /api/pages/:id — Toggle active */
+/**
+ * PUT /api/pages/:id — Toggle active / đổi tên
+ * Cập nhật trên ShopIntegrations (NOT Pages table)
+ */
 router.put('/:id', async (req, res) => {
   try {
     const { is_active, page_name } = req.body;
     const db = getDB();
-    await db.run('UPDATE Pages SET is_active = COALESCE(?, is_active), page_name = COALESCE(?, page_name) WHERE id = ? AND shop_id = ?',
-      [is_active, page_name, req.params.id, req.shop.shopId]);
+
+    // Chuyển is_active (0/1) sang status ('connected'/'disconnected')
+    const statusVal = typeof is_active !== 'undefined'
+      ? (is_active ? 'connected' : 'disconnected')
+      : undefined;
+
+    await db.run(
+      `UPDATE ShopIntegrations
+       SET status     = COALESCE(?, status),
+           page_name  = COALESCE(?, page_name)
+       WHERE id = ? AND shop_id = ?`,
+      [statusVal ?? null, page_name ?? null, req.params.id, req.shop.shopId]
+    );
+
     res.json({ message: 'Đã cập nhật.' });
   } catch (error) {
+    console.error('[PAGES PUT]', error.message);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
-/** DELETE /api/pages/:id */
+/**
+ * DELETE /api/pages/:id — Xóa Fanpage
+ * Xóa từ ShopIntegrations (NOT Pages table)
+ */
 router.delete('/:id', async (req, res) => {
   try {
     const db = getDB();
-    await db.run('DELETE FROM Pages WHERE id = ? AND shop_id = ?', [req.params.id, req.shop.shopId]);
+    await db.run(
+      'DELETE FROM ShopIntegrations WHERE id = ? AND shop_id = ?',
+      [req.params.id, req.shop.shopId]
+    );
     res.json({ message: 'Đã xóa.' });
   } catch (error) {
+    console.error('[PAGES DELETE]', error.message);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });

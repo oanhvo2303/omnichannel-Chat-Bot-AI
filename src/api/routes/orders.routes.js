@@ -13,10 +13,11 @@ router.use(authMiddleware);
 router.get('/shop-settings', async (req, res) => {
   try {
     const db = getDB();
-    const shop = await db.get('SELECT default_shipping_fee, free_shipping_threshold FROM Shops WHERE id = ?', [req.shop.shopId]);
+    const shop = await db.get('SELECT default_shipping_fee, free_shipping_threshold, free_shipping_min_quantity FROM Shops WHERE id = ?', [req.shop.shopId]);
     res.json({
       default_shipping_fee: shop?.default_shipping_fee ?? 30000,
-      free_shipping_threshold: shop?.free_shipping_threshold ?? 500000,
+      free_shipping_threshold: shop?.free_shipping_threshold ?? 0,
+      free_shipping_min_quantity: shop?.free_shipping_min_quantity ?? 0,
     });
   } catch (error) {
     console.error('[ORDERS] Lỗi lấy settings:', error.message);
@@ -28,11 +29,12 @@ router.get('/shop-settings', async (req, res) => {
 router.patch('/shop-settings', async (req, res) => {
   try {
     const db = getDB();
-    const { default_shipping_fee, free_shipping_threshold } = req.body;
+    const { default_shipping_fee, free_shipping_threshold, free_shipping_min_quantity } = req.body;
     const fee = Math.max(0, parseInt(default_shipping_fee) || 0);
     const threshold = Math.max(0, parseInt(free_shipping_threshold) || 0);
-    await db.run('UPDATE Shops SET default_shipping_fee = ?, free_shipping_threshold = ? WHERE id = ?', [fee, threshold, req.shop.shopId]);
-    res.json({ message: 'Đã cập nhật cài đặt phí ship.', default_shipping_fee: fee, free_shipping_threshold: threshold });
+    const minQty = Math.max(0, parseInt(free_shipping_min_quantity) || 0);
+    await db.run('UPDATE Shops SET default_shipping_fee = ?, free_shipping_threshold = ?, free_shipping_min_quantity = ? WHERE id = ?', [fee, threshold, minQty, req.shop.shopId]);
+    res.json({ message: 'Đã cập nhật cài đặt phí ship.', default_shipping_fee: fee, free_shipping_threshold: threshold, free_shipping_min_quantity: minQty });
   } catch (error) {
     console.error('[ORDERS] Lỗi cập nhật settings:', error.message);
     res.status(500).json({ error: 'Internal Server Error' });
@@ -490,11 +492,11 @@ router.post('/:id/ship', async (req, res) => {
       [shopId, order.customer_id, 'bot', notiText, 'inbox']
     );
 
-    // Emit real-time
+    // Emit real-time (FIX: room theo shop, không toàn hệ thống)
     const { getIO } = require('../../infra/socket/socketManager');
     const io = getIO();
     if (io) {
-      io.emit('new_message', {
+      io.to(String(shopId)).emit('new_message', {
         id: msgResult.lastID, shop_id: shopId, customer_id: order.customer_id,
         sender: 'bot', text: notiText, type: 'inbox', timestamp: new Date().toISOString(),
       });

@@ -42,17 +42,44 @@ const bootstrap = async () => {
   // Lưu instance io vào singleton để controller dùng
   setIO(io);
 
-  // Middleware bảo mật: Bắt buộc Socket.IO phải gửi JWT lên
-  io.use((socket, next) => {
+  // Middleware bảo mật: Bắt buộc Socket.IO phải gửi JWT và kiểm tra trạng thái account
+  io.use(async (socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) return next(new Error('Authentication error: Missing token'));
 
     try {
-      const jwt = require('jsonwebtoken');
+      const jwt     = require('jsonwebtoken');
       const decoded = jwt.verify(token, config.jwt.secret);
+
+      // FIX: Kiểm tra license/account_status từ DB
+      // JWT có thể vẫn hợp lệ dù account đã bị khóa sau khi token được phát hành
+      const { getDB } = require('./src/infra/database/sqliteConnection');
+      const db       = getDB();
+      const shop     = await db.get(
+        'SELECT account_status, license_status FROM Shops WHERE id = ?',
+        [decoded.shopId]
+      );
+
+      if (!shop) {
+        return next(new Error('Authentication error: Shop not found'));
+      }
+
+      if (shop.account_status === 'banned' || shop.license_status === 'SUSPENDED') {
+        console.warn(`[SOCKET] Kết nối bị từ chối: Shop #${decoded.shopId} bị SUSPENDED/banned.`);
+        return next(new Error('Account suspended: Realtime connection not allowed'));
+      }
+
+      if (shop.license_status === 'EXPIRED') {
+        console.warn(`[SOCKET] Kết nối bị từ chối: Shop #${decoded.shopId} license đã EXPIRED.`);
+        return next(new Error('License expired: Realtime connection not allowed'));
+      }
+
       socket.shopId = decoded.shopId;
       next();
     } catch (err) {
+      if (err.name === 'TokenExpiredError') {
+        return next(new Error('Authentication error: Token expired'));
+      }
       next(new Error('Authentication error: Invalid token'));
     }
   });
@@ -105,10 +132,12 @@ const bootstrap = async () => {
             addr: parseInt(PORT, 10),
             authtoken: process.env.NGROK_AUTH_TOKEN
           });
+          const ngrokUrl = listener.url();
+          process.env.NGROK_URL = ngrokUrl; // Lưu để rewrite localhost media URLs
 
           console.log('\n=======================================================');
           console.log(`🚀 [LINK WEBHOOK DÀNH CHO FACEBOOK (NGROK)]`);
-          console.log(`   ${listener.url()}/webhook/facebook`);
+          console.log(`   ${ngrokUrl}/webhook/facebook`);
           console.log('=======================================================\n');
         } catch (err) {
           console.error('[TUNNEL] Lỗi tạo ngrok:', err.message);

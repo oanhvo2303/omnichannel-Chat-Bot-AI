@@ -51,9 +51,20 @@ router.post('/send', async (req, res) => {
       return res.status(400).json({ error: 'Không tìm thấy khách hàng nào thỏa mãn điều kiện.' });
     }
 
-    // Lấy page token
-    const shop = await db.get('SELECT page_access_token FROM Shops WHERE id = ?', [shopId]);
-    const pageToken = shop?.page_access_token;
+    // FIX: Lấy page token từ ShopIntegrations (multi-page) với fallback legacy
+    let pageToken = null;
+    const integrationRows = await db.all(
+      `SELECT access_token FROM ShopIntegrations
+       WHERE shop_id = ? AND platform LIKE 'facebook_%' AND status = 'connected' AND access_token IS NOT NULL
+       LIMIT 1`,
+      [shopId]
+    );
+    if (integrationRows.length > 0) {
+      pageToken = integrationRows[0].access_token;
+    } else {
+      const shopRow = await db.get('SELECT page_access_token FROM Shops WHERE id = ?', [shopId]);
+      pageToken = shopRow?.page_access_token || null;
+    }
 
     if (!pageToken) {
       return res.status(400).json({ error: 'Chưa kết nối Facebook Fanpage. Vui lòng vào Kết nối Đa kênh.' });
@@ -130,9 +141,9 @@ router.post('/send', async (req, res) => {
         // Cập nhật DB progress
         await db.run('UPDATE Broadcasts SET sent = ?, failed = ? WHERE id = ?', [sent, failed, campaignId]);
 
-        // Emit progress qua Socket.IO (mỗi tin hoặc mỗi 3 tin)
+        // FIX: Emit progress chỉ vào room của shop này
         if (io && (i % 3 === 0 || i === recipients.length - 1)) {
-          io.emit('remarketing_progress', {
+          io.to(String(shopId)).emit('remarketing_progress', {
             id: campaignId,
             total: recipients.length,
             sent,
@@ -155,7 +166,8 @@ router.post('/send', async (req, res) => {
       await db.run('UPDATE Broadcasts SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?', [finalStatus, campaignId]);
 
       if (io) {
-        io.emit('remarketing_progress', {
+        // FIX: Room theo shop
+        io.to(String(shopId)).emit('remarketing_progress', {
           id: campaignId,
           total: recipients.length,
           sent, failed,

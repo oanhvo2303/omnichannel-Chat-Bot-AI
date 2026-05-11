@@ -59,12 +59,25 @@ export default function BroadcastPage() {
   // Socket.IO: listen for broadcast progress
   useEffect(() => {
     if (!shop) return;
-    const socket = io(API_BASE);
+    const token = localStorage.getItem("token");
+    if (!token) return; // Không kết nối nếu chưa auth
+
+    // FIX: Gửi JWT token khi kết nối — backend verify và join đúng room theo shopId
+    const socket = io(API_BASE, {
+      auth: { token },
+      transports: ["websocket", "polling"],
+    });
+
+    socket.on("connect_error", (err) => {
+      console.error("[SOCKET] Broadcast connection error:", err.message);
+    });
+
     socket.on("broadcast_progress", (data) => {
       setBroadcasts((prev) =>
         prev.map((b) => b.id === data.id ? { ...b, ...data } : b)
       );
     });
+
     return () => socket.disconnect();
   }, [shop]);
 
