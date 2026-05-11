@@ -1,9 +1,10 @@
-'use strict';
+﻿'use strict';
 
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
 const { writeAudit, getClientIp } = require('../services/auditService');
+const { checkPlanLimit } = require('../services/planLimitService');
 const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
 
 const router = express.Router();
@@ -68,7 +69,7 @@ router.get('/', async (req, res) => {
 });
 
 /** POST /api/products — Thêm sản phẩm */
-router.post('/', requireOwnerOrAdmin, async (req, res) => {
+router.post('/', requireOwnerOrAdmin, checkPlanLimit('products'), async (req, res) => {
   try {
     const { name, sku, price, stock_quantity, image_url, volume_pricing, description, attributes, images } = req.body;
     if (!name) return res.status(400).json({ error: 'Tên sản phẩm là bắt buộc.' });

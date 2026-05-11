@@ -1,8 +1,9 @@
-'use strict';
+﻿'use strict';
 
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
+const { checkPlanLimit } = require('../services/planLimitService');
 const { requireOwnerOrAdmin, requireMarketingPermission } = require('../middlewares/roleMiddleware');
 const { processBroadcast, getRecipients } = require('../services/broadcastService');
 const { writeAudit, getClientIp } = require('../services/auditService');
@@ -45,7 +46,7 @@ router.get('/:id', async (req, res) => {
 });
 
 /** POST /api/broadcasts — Tạo chiến dịch mới (marketing permission) */
-router.post('/', requireMarketingPermission, async (req, res) => {
+router.post('/', checkPlanLimit('broadcasts_month'), requireMarketingPermission, async (req, res) => {
   try {
     const { name, message, image_url, tag_ids } = req.body;
     if (!name || !message) return res.status(400).json({ error: 'name và message là bắt buộc.' });

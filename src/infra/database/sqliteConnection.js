@@ -536,6 +536,10 @@ const initSQLite = async () => {
     `);
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_pending ON Jobs(status, run_after) WHERE status = 'pending';`);
 
+    // ── Chạy versioned migrations (ALTER TABLE, index, v.v.) ──
+    const { runMigrations } = require('./migrations');
+    await runMigrations(db);
+
     console.log('[DATABASE] Cấu trúc bảng đã được đồng bộ.');
 
     dbInstance = db;

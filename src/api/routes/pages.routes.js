@@ -4,6 +4,7 @@ const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
 const { writeAudit, getClientIp } = require('../services/auditService');
+const { checkPlanLimit } = require('../services/planLimitService');
 const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
 
 const router = express.Router();
@@ -183,7 +184,7 @@ router.get('/', async (req, res) => {
  * FIX: Ghi vào ShopIntegrations (nguồn sự thật duy nhất),
  * thay vì Pages table cũ. Webhook và GET đều đọc ShopIntegrations.
  */
-router.post('/', requireOwnerOrAdmin, async (req, res) => {
+router.post('/', requireOwnerOrAdmin, checkPlanLimit('pages'), async (req, res) => {
   try {
     const { page_id, page_name, page_access_token, platform } = req.body;
 
