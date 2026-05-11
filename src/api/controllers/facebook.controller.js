@@ -1039,15 +1039,32 @@ ${knowledgeEntries.join('\n\n')}
           console.log('[AI TRACE] ℹ️ billSentAsReply=true → skip Messenger send. Vẫn lưu DB để Sale xem.');
           // fall through → lưu DB + emit Socket bên dưới nhưng KHÔNG gửi Messenger thêm lần nữa
         } else {
-          // Guard 2 (defensive): replyText vẫn là JSON thô khi schema leak qua edge case → extract .reply
-          let textToSend = replyText;
+          // Guard 2 (defensive — last line): strip JSON nếu model vẫn append vào reply text
+          let textToSend = (replyText || '').trim();
+          // [A] pure JSON → extract .reply
           try {
-            const maybeJson = JSON.parse((replyText || '').trim());
-            if (maybeJson?.reply && typeof maybeJson.reply === 'string') {
-              textToSend = maybeJson.reply;
-              console.warn('[AI TRACE] ⚠️ replyText là JSON thô → đã extract .reply để gửi cho khách');
+            const p = JSON.parse(textToSend);
+            if (p?.reply && typeof p.reply === 'string') {
+              console.warn('[AI TRACE] ⚠️ replyText là pure JSON → extract .reply');
+              textToSend = p.reply;
             }
-          } catch { /* không phải JSON → giữ nguyên */ }
+          } catch {
+            // [B] text + appended JSON → cắt JSON suffix
+            const lb = textToSend.lastIndexOf('{');
+            if (lb > 0) {
+              try {
+                const p = JSON.parse(textToSend.slice(lb));
+                if (p?.reply && typeof p.reply === 'string') {
+                  console.warn('[AI TRACE] ⚠️ replyText có JSON appended → extract .reply, strip suffix');
+                  textToSend = p.reply;
+                } else {
+                  // JSON không có .reply → cắt bỏ JSON suffix, giữ phần text trước
+                  textToSend = textToSend.slice(0, lb).trim();
+                  console.warn('[AI TRACE] ⚠️ replyText có JSON appended (no .reply) → strip suffix');
+                }
+              } catch { textToSend = textToSend.slice(0, lb).trim(); }
+            }
+          }
 
           // ★★★ TÁCH AI RESPONSE THÀNH NHIỀU TIN NHẮN GỬI TUẦN TỰ ★★★
           const messageParts = splitAIResponse(textToSend);
