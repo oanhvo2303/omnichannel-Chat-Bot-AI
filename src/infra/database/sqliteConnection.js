@@ -514,6 +514,28 @@ const initSQLite = async () => {
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_audit_shop ON AuditLogs(shop_id, created_at DESC);`);
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_audit_actor ON AuditLogs(actor_id);`);
 
+    // =============================================
+    // Bảng Jobs — Persistent Queue (broadcast/remarketing/followup)
+    // =============================================
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS Jobs (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        shop_id      INTEGER NOT NULL,
+        type         TEXT NOT NULL,              -- 'broadcast' | 'remarketing' | 'followup'
+        status       TEXT NOT NULL DEFAULT 'pending', -- 'pending' | 'running' | 'done' | 'failed'
+        payload      TEXT NOT NULL,             -- JSON payload
+        attempts     INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 3,
+        run_after    DATETIME DEFAULT CURRENT_TIMESTAMP,
+        started_at   DATETIME,
+        completed_at DATETIME,
+        error        TEXT,
+        created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (shop_id) REFERENCES Shops(id) ON DELETE CASCADE
+      );
+    `);
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_pending ON Jobs(status, run_after) WHERE status = 'pending';`);
+
     console.log('[DATABASE] Cấu trúc bảng đã được đồng bộ.');
 
     dbInstance = db;

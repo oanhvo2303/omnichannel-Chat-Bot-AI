@@ -117,6 +117,10 @@ const bootstrap = async () => {
     const { startFollowupScheduler } = require('./src/services/followup/followupScheduler');
     startFollowupScheduler();
 
+    // 🗂️ Start persistent Job Queue Worker (broadcast/remarketing/followup)
+    const { startWorker } = require('./src/services/queue/queueWorker');
+    startWorker();
+
     // 🚀 Tự động đào hầm Ngrok ra Internet (Sử dụng Official SDK)
     if (config.server.nodeEnv === 'development') {
       const ngrok = require('@ngrok/ngrok');
