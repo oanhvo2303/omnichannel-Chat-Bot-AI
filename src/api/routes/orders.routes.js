@@ -5,6 +5,7 @@ const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
 const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
 const { sendCapiEvent } = require('../../services/facebookCapiService');
+const { writeAudit, getClientIp } = require('../services/auditService');
 const crypto = require('crypto');
 
 const router = express.Router();
@@ -133,6 +134,14 @@ router.post('/', async (req, res) => {
         }
       }
       await db.run('COMMIT');
+
+      // Audit log sau khi COMMIT thành công
+      writeAudit({
+        shopId, actorId: req.shop.staffId, actorRole: req.shop.role,
+        action: 'CREATE_ORDER', resource: 'Orders', resourceId: orderId,
+        detail: { total: totalAmount, items: resolvedItems.length, customer_id },
+        ip: getClientIp(req),
+      });
     } catch (txErr) {
       await db.run('ROLLBACK');
       throw txErr;
@@ -460,6 +469,13 @@ router.patch('/:id', async (req, res) => {
     }
 
     console.log(`[ORDERS] ✏️ Đơn #${orderId} đã được chỉnh sửa bởi Shop #${shopId}`);
+
+    // Audit log
+    writeAudit({
+      shopId, actorId: req.shop.staffId, actorRole: req.shop.role,
+      action: 'EDIT_ORDER', resource: 'Orders', resourceId: orderId,
+      detail: { status, items_changed: !!items }, ip: getClientIp(req),
+    });
 
     // Return updated order
     const updated = await db.get(

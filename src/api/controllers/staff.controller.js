@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const config = require('../../config');
 const { getDB } = require('../../infra/database/sqliteConnection');
+const { writeAudit } = require('../services/auditService');
 
 /**
  * Staff Auth Controller — Đăng ký nhân viên, Đăng nhập, Quản lý staff
@@ -146,6 +147,12 @@ const deleteStaff = async (req, res) => {
     await db.run('DELETE FROM Staff WHERE id = ? AND shop_id = ?', [staffIdToDelete, shopId]);
     console.log(`[STAFF] ❌ Đã xóa nhân viên #${staffIdToDelete} (${target.name}) khỏi Shop #${shopId}`);
 
+    writeAudit({
+      shopId, actorId: req.shop.staffId, actorRole: req.shop.role,
+      action: 'DELETE_STAFF', resource: 'Staff', resourceId: staffIdToDelete,
+      detail: { name: target.name, role: target.role },
+    });
+
     res.json({ message: `Đã xóa nhân viên ${target.name}.` });
   } catch (error) {
     console.error('[STAFF] Lỗi xóa nhân viên:', error.message);
@@ -191,6 +198,12 @@ const updateStaffRole = async (req, res) => {
 
     await db.run('UPDATE Staff SET role = ? WHERE id = ? AND shop_id = ?', [newRole, staffIdToUpdate, shopId]);
     console.log(`[STAFF] 🔄 Đổi quyền #${staffIdToUpdate} (${target.name}): ${target.role} → ${newRole} | Shop #${shopId}`);
+
+    writeAudit({
+      shopId, actorId: req.shop.staffId, actorRole: req.shop.role,
+      action: 'UPDATE_STAFF_ROLE', resource: 'Staff', resourceId: staffIdToUpdate,
+      detail: { name: target.name, old_role: target.role, new_role: newRole },
+    });
 
     res.json({ message: `Đã đổi quyền ${target.name} thành ${newRole}.`, staff: { id: staffIdToUpdate, role: newRole } });
   } catch (error) {

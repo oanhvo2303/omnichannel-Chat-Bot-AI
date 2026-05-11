@@ -4,6 +4,7 @@ const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
 const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
+const { writeAudit, getClientIp } = require('../services/auditService');
 
 const router = express.Router();
 
@@ -72,6 +73,13 @@ router.post('/', requireOwnerOrAdmin, async (req, res) => {
     }
 
     res.json({ success: true, message: 'Cập nhật cấu hình thành công' });
+
+    writeAudit({
+      shopId, actorId: req.shop.staffId, actorRole: req.shop.role,
+      action: 'UPDATE_TRACKING_CONFIG', resource: 'ShopTracking',
+      detail: { pixel_id, capi_token_changed: !!(capi_token && !capi_token.startsWith('****')), is_active },
+      ip: getClientIp(req),
+    });
   } catch (error) {
     console.error('[TRACKING] Lỗi cập nhật cấu hình:', error.message);
     res.status(500).json({ error: 'Lỗi máy chủ nội bộ' });
