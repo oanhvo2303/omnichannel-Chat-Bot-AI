@@ -92,15 +92,24 @@ router.post('/test', requireOwnerOrAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Vui lòng lưu cấu hình Pixel ID và CAPI Token trước khi test.' });
     }
 
-    // Call graph api for testing
     const apiUrl = `https://graph.facebook.com/v19.0/${config.pixel_id}/events`;
+
+    // FIX: Dùng event name hợp lệ (TestEvent không phải tên event chuẩn FB)
+    // action_source = 'system_generated' phù hợp với Messaging channel
     const payload = {
       data: [
         {
-          event_name: 'TestEvent',
+          event_name: 'Lead',                           // Tên event chuẩn FB
           event_time: Math.floor(Date.now() / 1000),
-          action_source: 'system_generated',
-          user_data: { client_ip_address: '1.2.3.4', client_user_agent: 'TestAgent' },
+          action_source: 'system_generated',           // Messaging source
+          event_source_url: null,                      // Không có với system_generated
+          user_data: {
+            client_ip_address: req.ip || '127.0.0.1',
+            client_user_agent: req.headers['user-agent'] || 'OmnichannelBot/1.0',
+          },
+          custom_data: {
+            source: 'omnichannel_test',
+          }
         }
       ],
     };
@@ -109,6 +118,8 @@ router.post('/test', requireOwnerOrAdmin, async (req, res) => {
       payload.test_event_code = config.test_event_code;
     }
 
+    console.log(`[TRACKING] Gửi test event tới Pixel #${config.pixel_id} (test_code: ${config.test_event_code || 'none'})`);
+
     const response = await fetch(`${apiUrl}?access_token=${config.capi_token}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -116,11 +127,23 @@ router.post('/test', requireOwnerOrAdmin, async (req, res) => {
     });
 
     const data = await response.json();
+    console.log(`[TRACKING] Facebook API response (${response.status}):`, JSON.stringify(data));
+
     if (!response.ok) {
-      return res.status(400).json({ error: data.error?.message || 'Lỗi từ Facebook API' });
+      console.error('[TRACKING] CAPI Error:', JSON.stringify(data.error));
+      return res.status(400).json({
+        error: data.error?.message || 'Lỗi từ Facebook API',
+        fb_error: data.error || null
+      });
     }
 
-    res.json({ success: true, message: 'Test event sent successfully' });
+    res.json({
+      success: true,
+      message: 'Test event đã gửi thành công. Kiểm tra tab “Test Events” trong Facebook Events Manager.',
+      events_received: data.events_received || 0,
+      pixel_id: config.pixel_id,
+      test_event_code: config.test_event_code || null,
+    });
   } catch (error) {
     console.error('[TRACKING] Lỗi Test CAPI:', error.message);
     res.status(500).json({ error: 'Lỗi kết nối Facebook API' });
