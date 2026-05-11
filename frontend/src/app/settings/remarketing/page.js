@@ -109,7 +109,7 @@ export default function RemarketingPage() {
   const updateTemplate = (i, val) => setSettings(s => ({
     ...s, remarketing_templates: s.remarketing_templates.map((t, idx) => idx === i ? val : t)
   }));
-  const useSampleP2 = (msg) => setSettings(s => ({
+  const applySampleP2 = (msg) => setSettings(s => ({
     ...s, remarketing_templates: [...s.remarketing_templates.filter(t => t.trim()), msg]
   }));
 
@@ -324,7 +324,7 @@ export default function RemarketingPage() {
                 <Plus className="w-3.5 h-3.5" /> Thêm mẫu
               </button>
               {SAMPLE_PHASE2.map((msg, i) => (
-                <button key={i} onClick={() => useSampleP2(msg)} className="text-[10px] text-zinc-500 bg-zinc-50 hover:bg-zinc-100 border border-zinc-200 rounded-lg px-2 py-1 transition-all">
+                <button key={i} onClick={() => applySampleP2(msg)} className="text-[10px] text-zinc-500 bg-zinc-50 hover:bg-zinc-100 border border-zinc-200 rounded-lg px-2 py-1 transition-all">
                   + Gợi ý {i + 1}
                 </button>
               ))}
