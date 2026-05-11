@@ -697,20 +697,30 @@ ${knowledgeEntries.join('\n\n')}
           console.log(`[AI TRACE] 🤖 Gọi Gemini AGENTIC cho Khách #${customer.id} (${customer.name}) | History: ${historyRows.length} msgs | Products: ${products.length} | FAQs: ${ragCtx.relevantFaqs.length} | Knowledge: ${shop.bot_rules_mode === 'knowledge' ? rules.length + ' rules' : 'OFF'} | Key: ${shopLicense?.gemini_api_key ? 'SHOP' : 'GLOBAL'} | Quota: ${shopLicense?.ai_messages_used || 0}/${shopLicense?.ai_quota_limit || 0}`);
           const rawAnalysis = await agenticAnalyzeMessage(messageText, enrichedSystemPrompt, historyRows, { shopId: shop.id, customerId: customer.id, customerName: customer.name, shopApiKey: shopLicense?.gemini_api_key || null }, enrichedCatalog, imageData);
 
-          // ★ RAG Confidence Guard
+          // ★ RAG Confidence Guard — chỉ escalate khi Gemini thực sự không có reply
           const ragResult = parseRAGResponse(rawAnalysis);
           const escalation = shouldEscalate(ragResult);
 
-          if (escalation.shouldEscalate && !rawAnalysis.toolCalls?.length) {
-            // Low confidence → chuyển nhân viên thật
-            console.log(`[RAG] ⚠️ Escalating customer #${customer.id}: ${escalation.reason}`);
+          // Fix: KHÔNG escalate nếu Gemini đã có reply hợp lệ
+          // - rawAnalysis.reply có nội dung → Gemini đã hiểu và trả lời
+          // - toolCalls.length > 0 → Gemini đã thực hiện action (tag/order/script)
+          // Chỉ escalate khi reply rỗng VÀ không có tool call
+          const hasValidReply = rawAnalysis.reply && rawAnalysis.reply.trim().length > 5;
+          const hasToolCalls  = rawAnalysis.toolCalls?.length > 0;
+          const doEscalate    = escalation.shouldEscalate && !hasValidReply && !hasToolCalls;
+
+          if (doEscalate) {
+            console.log(`[RAG] ⚠️ Escalating customer #${customer.id}: ${escalation.reason} (no valid reply)`);
             replyText = buildEscalationReply(customer.name);
             replyIntent = 'ESCALATE';
-            // Mark customer cần nhân viên (không pause AI vĩnh viễn — chỉ flag)
             markNeedsHuman(customer.id, shop.id, escalation.reason);
           } else {
+            // Dùng reply của Gemini — đây là source of truth
             replyText = ragResult.reply;
             replyIntent = ragResult.intent;
+            if (escalation.shouldEscalate) {
+              console.log(`[RAG] ℹ️ Low confidence (${ragResult.confidence}) nhưng Gemini đã có reply → giữ nguyên, không escalate`);
+            }
           }
 
           const analysis = rawAnalysis; // Giữ toolCalls để xử lý bên dưới
