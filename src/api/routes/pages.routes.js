@@ -83,7 +83,7 @@ router.get('/health', async (req, res) => {
     const pageIds = pages.map(p => p.page_id);
     const placeholders = pageIds.map(() => '?').join(',');
     const lastMsgs = await db.all(
-      `SELECT page_id, MAX(created_at) as last_message_at
+      `SELECT page_id, MAX(timestamp) as last_message_at
        FROM Messages
        WHERE shop_id = ? AND page_id IN (${placeholders})
        GROUP BY page_id`,
