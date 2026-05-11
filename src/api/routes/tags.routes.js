@@ -3,6 +3,8 @@
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
+const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
+const { writeAudit, getClientIp } = require('../services/auditService');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -23,8 +25,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-/** POST /api/tags — Tạo tag mới */
-router.post('/', async (req, res) => {
+/** POST /api/tags — Tạo tag mới (owner/admin only) */
+router.post('/', requireOwnerOrAdmin, async (req, res) => {
   try {
     const { name, color } = req.body;
     if (!name) return res.status(400).json({ error: 'Tên tag là bắt buộc.' });
@@ -34,6 +36,10 @@ router.post('/', async (req, res) => {
       'INSERT INTO Tags (shop_id, name, color) VALUES (?, ?, ?)',
       [req.shop.shopId, name.trim(), color || '#3B82F6']
     );
+
+    writeAudit({ shopId: req.shop.shopId, actorId: req.shop.staffId, actorRole: req.shop.role,
+      action: 'CREATE_TAG', resource: 'Tags', resourceId: result.lastID,
+      detail: { name: name.trim(), color }, ip: getClientIp(req) });
 
     res.status(201).json({ id: result.lastID, shop_id: req.shop.shopId, name: name.trim(), color: color || '#3B82F6' });
   } catch (error) {
@@ -45,11 +51,13 @@ router.post('/', async (req, res) => {
   }
 });
 
-/** DELETE /api/tags/:id — Xóa tag */
-router.delete('/:id', async (req, res) => {
+/** DELETE /api/tags/:id — Xóa tag (owner/admin only) */
+router.delete('/:id', requireOwnerOrAdmin, async (req, res) => {
   try {
     const db = getDB();
     await db.run('DELETE FROM Tags WHERE id = ? AND shop_id = ?', [req.params.id, req.shop.shopId]);
+    writeAudit({ shopId: req.shop.shopId, actorId: req.shop.staffId, actorRole: req.shop.role,
+      action: 'DELETE_TAG', resource: 'Tags', resourceId: req.params.id, ip: getClientIp(req) });
     res.json({ message: 'Đã xóa tag.' });
   } catch (error) {
     console.error('[TAGS] Lỗi xóa tag:', error.message);
@@ -57,8 +65,8 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-/** PUT /api/tags/:id — Cập nhật tag */
-router.put('/:id', async (req, res) => {
+/** PUT /api/tags/:id — Cập nhật tag (owner/admin only) */
+router.put('/:id', requireOwnerOrAdmin, async (req, res) => {
   try {
     const { name, color } = req.body;
     if (!name) return res.status(400).json({ error: 'Tên tag là bắt buộc.' });

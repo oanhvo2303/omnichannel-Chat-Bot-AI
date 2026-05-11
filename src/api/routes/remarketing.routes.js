@@ -3,8 +3,10 @@
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
+const { requireMarketingPermission } = require('../middlewares/roleMiddleware');
 const { getRecipients } = require('../services/broadcastService');
 const { getIO } = require('../../infra/socket/socketManager');
+const { writeAudit, getClientIp } = require('../services/auditService');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -35,7 +37,7 @@ router.get('/preview', async (req, res) => {
  * Fire-and-forget: Trả response ngay, worker chạy ngầm.
  * Emit progress qua Socket.IO event "remarketing_progress"
  */
-router.post('/send', async (req, res) => {
+router.post('/send', requireMarketingPermission, async (req, res) => {
   try {
     const { message, image_url, tag_ids } = req.body;
     if (!message || !message.trim()) {

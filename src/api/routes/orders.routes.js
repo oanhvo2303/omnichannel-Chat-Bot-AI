@@ -3,7 +3,7 @@
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { authMiddleware } = require('../middlewares/authMiddleware');
-const { requireOwnerOrAdmin } = require('../middlewares/roleMiddleware');
+const { requireOwnerOrAdmin, requireOrderPermission } = require('../middlewares/roleMiddleware');
 const { sendCapiEvent } = require('../../services/facebookCapiService');
 const { writeAudit, getClientIp } = require('../services/auditService');
 const crypto = require('crypto');
@@ -44,7 +44,7 @@ router.patch('/shop-settings', requireOwnerOrAdmin, async (req, res) => {
 });
 
 /** POST /api/orders — Tạo đơn hàng mới (E-commerce pricing: subtotal + shipping - discount) */
-router.post('/', async (req, res) => {
+router.post('/', requireOrderPermission, async (req, res) => {
   try {
     const { customer_id, items, note, customer_phone, customer_address, discount_amount, discount_type, shipping_fee, recipient_name } = req.body;
 
@@ -324,7 +324,7 @@ router.get('/:id', async (req, res) => {
 });
 
 /** PATCH /api/orders/:id — Chỉnh sửa đơn hàng (E-commerce pricing) */
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', requireOrderPermission, async (req, res) => {
   try {
     const db = getDB();
     const shopId = req.shop.shopId;
@@ -494,7 +494,7 @@ router.patch('/:id', async (req, res) => {
 });
 
 /** PATCH /api/orders/:id/status — Cập nhật trạng thái đơn */
-router.patch('/:id/status', async (req, res) => {
+router.patch('/:id/status', requireOrderPermission, async (req, res) => {
   try {
     const { status } = req.body;
     const validStatuses = ['pending', 'confirmed', 'shipping', 'completed', 'cancelled'];
@@ -517,7 +517,7 @@ router.patch('/:id/status', async (req, res) => {
 });
 
 /** POST /api/orders/:id/ship — Đẩy đơn sang Hãng Vận Chuyển lấy mã vận đơn */
-router.post('/:id/ship', async (req, res) => {
+router.post('/:id/ship', requireOrderPermission, async (req, res) => {
   try {
     const db = getDB();
     const shopId = req.shop.shopId;
