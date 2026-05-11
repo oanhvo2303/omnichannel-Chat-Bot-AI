@@ -232,16 +232,10 @@ function buildEscalationReply(customerName) {
  * Đánh dấu customer cần nhân viên thật trong DB (is_ai_paused = 1).
  */
 async function markNeedsHuman(customerId, shopId, reason) {
-  try {
-    const db = getDB();
-    await db.run(
-      `UPDATE Customers SET is_ai_paused = 1 WHERE id = ? AND shop_id = ?`,
-      [customerId, shopId]
-    );
-    console.log(`[RAG] 🔔 Customer #${customerId} → needs_human (${reason})`);
-  } catch (err) {
-    console.warn('[RAG] Không thể mark needs_human:', err.message);
-  }
+  // Fix: KHÔNG set is_ai_paused=1 — điều đó khóa AI vĩnh viễn cho khách chỉ vì 1 câu confidence thấp.
+  // Escalation chỉ có nghĩa là "turn này chuyển nhân viên" — không phải khóa mãi mãi.
+  // Staff nhìn thấy ESCALATE intent trên Dashboard và có thể take over thủ công nếu cần.
+  console.log(`[RAG] 🔔 Escalation logged for Customer #${customerId} (${reason}) — AI vẫn active cho lần sau`);
 }
 
 // ─── 6. Main pipeline function ────────────────────────────────────
