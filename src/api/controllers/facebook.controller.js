@@ -914,9 +914,9 @@ async function processComment(pageId, senderId, senderName, commentText, comment
     const db = getDB();
     const io = getIO();
 
-    // Tương tự, tra cứu comment qua ShopIntegrations
+    // FIX: Dùng LIKE 'facebook%' để match cả 'facebook' lẫn 'facebook_<pageId>' (multi-page)
     const integration = await db.get(
-      "SELECT shop_id, access_token, auto_hide_comments FROM ShopIntegrations WHERE page_id = ? AND platform = 'facebook' AND status = 'connected'",
+      "SELECT shop_id, access_token, auto_hide_comments FROM ShopIntegrations WHERE page_id = ? AND platform LIKE 'facebook%' AND status = 'connected'",
       [pageId]
     );
     if (!integration) return;

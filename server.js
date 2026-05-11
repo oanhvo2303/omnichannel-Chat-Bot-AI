@@ -113,6 +113,10 @@ const bootstrap = async () => {
     const { startMarketplaceSync } = require('./src/api/services/marketplaceSyncService');
     startMarketplaceSync();
 
+    // FIX: Start follow-up scheduler (gửi tin nhắn follow-up tự động)
+    const { startFollowupScheduler } = require('./src/services/followup/followupScheduler');
+    startFollowupScheduler();
+
     // 🚀 Tự động đào hầm Ngrok ra Internet (Sử dụng Official SDK)
     if (config.server.nodeEnv === 'development') {
       const ngrok = require('@ngrok/ngrok');

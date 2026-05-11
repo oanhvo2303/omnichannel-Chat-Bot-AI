@@ -19,8 +19,16 @@ async function pushOrderToCarrier(provider, token, orderData) {
   await new Promise(resolve => setTimeout(resolve, 300));
 
   if (!token || token.trim() === '') {
-    // ► MOCK MODE — Trả response giả khi chưa có API token
-    console.warn(`[SHIPPING MOCK] Đẩy đơn ${provider} ảo vì không có Token thật.`);
+    // Production: Từ chối — không tạo vận đơn giả
+    if (process.env.NODE_ENV === 'production') {
+      console.error(`[SHIPPING] ❌ Không có token ${provider} trong production. Từ chối tạo đơn.`);
+      return {
+        success: false,
+        error: `Chưa cấu hình API token cho ${provider}. Vui lòng vào Cài đặt > Vận chuyển để nhập token.`,
+      };
+    }
+    // Development/Staging: Mock Mode — cho phép test
+    console.warn(`[SHIPPING MOCK] Đẩy đơn ${provider} ảo vì không có Token thật (chỉ dev).`);
     const prefixMap = { GHTK: 'S-GHTK-', GHN: 'GHN-', VIETTEL_POST: 'VTP-' };
     const prefix = prefixMap[provider] || 'SHIP-';
     const trackingCode = `${prefix}${Math.floor(100000000 + Math.random() * 900000000)}`;

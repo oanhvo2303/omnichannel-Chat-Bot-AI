@@ -19,9 +19,16 @@ router.get('/', async (req, res) => {
       'SELECT pixel_id, capi_token, test_event_code, is_active FROM ShopTracking WHERE shop_id = ?',
       [req.shop.shopId]
     );
+    // FIX: Không trả full CAPI token về frontend — đây là secret
+    const rawToken = config?.capi_token || '';
+    const maskedToken = rawToken.length > 4
+      ? `****${rawToken.slice(-4)}`
+      : (rawToken.length > 0 ? '****' : '');
+
     res.json({
       pixel_id: config?.pixel_id || '',
-      capi_token: config?.capi_token || '',
+      capi_token: maskedToken,          // Masked — chỉ hiển thị có/không để UI biết
+      has_capi_token: rawToken.length > 0,
       test_event_code: config?.test_event_code || '',
       is_active: config?.is_active === 1
     });
@@ -41,20 +48,25 @@ router.post('/', async (req, res) => {
     const shopId = req.shop.shopId;
     const { pixel_id, capi_token, test_event_code, is_active } = req.body;
 
-    const existing = await db.get('SELECT id FROM ShopTracking WHERE shop_id = ?', [shopId]);
+    const existing = await db.get('SELECT id, capi_token FROM ShopTracking WHERE shop_id = ?', [shopId]);
+
+    // FIX: Nếu user không nhập token mới (gửi rỗng), giữ token cũ trong DB
+    const finalCapiToken = (capi_token && capi_token.trim() && !capi_token.startsWith('****'))
+      ? capi_token.trim()
+      : (existing?.capi_token || '');
 
     if (existing) {
       await db.run(
         `UPDATE ShopTracking 
          SET pixel_id = ?, capi_token = ?, test_event_code = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP 
          WHERE shop_id = ?`,
-        [pixel_id, capi_token, test_event_code, is_active ? 1 : 0, shopId]
+        [pixel_id, finalCapiToken, test_event_code, is_active ? 1 : 0, shopId]
       );
     } else {
       await db.run(
         `INSERT INTO ShopTracking (shop_id, pixel_id, capi_token, test_event_code, is_active) 
          VALUES (?, ?, ?, ?, ?)`,
-        [shopId, pixel_id, capi_token, test_event_code, is_active ? 1 : 0]
+        [shopId, pixel_id, finalCapiToken, test_event_code, is_active ? 1 : 0]
       );
     }
 

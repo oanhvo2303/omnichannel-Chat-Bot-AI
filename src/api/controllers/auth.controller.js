@@ -78,9 +78,17 @@ const login = async (req, res) => {
       return res.status(401).json({ error: 'Email hoặc mật khẩu không đúng.' });
     }
 
-    // Kiểm tra tính kích hoạt (tuỳ chọn chặn nếu is_active = 0, nhưng tạm để pass cho dev)
-    if (shop.is_active === 0) {
-      console.log(`[AUTH] Shop ${email} đang chờ duyệt (is_active=0).`);
+    // Chặn login nếu account bị banned
+    if (shop.account_status === 'banned') {
+      console.warn(`[AUTH] ❌ Tài khoản bị khóa: ${email}`);
+      return res.status(403).json({ error: 'Tài khoản của bạn đã bị khóa. Vui lòng liên hệ hỗ trợ.' });
+    }
+
+    // Chặn login nếu chưa được duyệt (is_active = 0)
+    // Ghi chú: Nếu muốn cho phép dev/test không check, đặt DEV_SKIP_ACTIVE_CHECK=true trong .env
+    if (shop.is_active === 0 && process.env.DEV_SKIP_ACTIVE_CHECK !== 'true') {
+      console.warn(`[AUTH] ❌ Tài khoản chờ duyệt: ${email} (is_active=0)`);
+      return res.status(403).json({ error: 'Tài khoản đang chờ duyệt. Vui lòng liên hệ quản trị để kích hoạt.' });
     }
 
     // Tạo JWT (hạn 7 ngày như Sếp yêu cầu)

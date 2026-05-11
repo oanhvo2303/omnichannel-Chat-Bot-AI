@@ -27,6 +27,9 @@ const trackingRoutes = require('./api/routes/tracking.routes');
 const remarketingRoutes = require('./api/routes/remarketing.routes');
 const uploadRoutes = require('./api/routes/upload.routes');
 const adminRoutes = require('./api/routes/admin.routes');
+const aiSettingsRoutes = require('./api/routes/aiSettings.routes');
+const dataDeletionRoutes = require('./api/routes/dataDeletion.routes');
+const followupRoutes = require('./api/routes/followup.routes'); // FIX: mount followup
 
 /**
  * Creates and configures the Express application instance.
@@ -40,10 +43,23 @@ const createApp = () => {
   // Global Middleware
   // =============================================
 
-  // CORS — cho phép Frontend (port 3002) gọi API Backend (port 3000)
+  // CORS — cho phép Frontend gọi API từ mọi môi trường
+  const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:3002',
+    'http://127.0.0.1:3002',
+    'http://pgquangngai.io.vn',
+    'https://pgquangngai.io.vn',
+    'http://206.168.191.117:25402',
+  ];
   app.use(cors({
-    origin: ['http://localhost:3002', 'http://127.0.0.1:3002'],
-    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
+    origin: (origin, callback) => {
+      // Cho phép requests không có origin (server-to-server, Postman)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      callback(new Error(`CORS: Origin ${origin} không được phép.`));
+    },
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: true,
   }));
 
@@ -94,6 +110,9 @@ const createApp = () => {
   app.use('/api/remarketing', remarketingRoutes);              // Re-marketing campaigns
   app.use('/api/upload', uploadRoutes);                          // Image upload
   app.use('/api/admin', adminRoutes);                            // Nền tảng SaaS (SUPER_ADMIN)
+  app.use('/api/settings/ai', aiSettingsRoutes);                    // AI Settings per Shop
+  app.use('/api/data-deletion', dataDeletionRoutes);               // Facebook Data Deletion Callback (GDPR)
+  app.use('/api/followup', followupRoutes);                          // FIX: Follow-up campaigns
   app.use('/api', apiRoutes);             // Protected: cần JWT
 
 

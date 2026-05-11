@@ -1,6 +1,10 @@
 node_modules/
 .next/
+# Environment files — KHÔNG bao giờ commit
 .env
+.env.local
+.env.production
+.env.*.local
 *.db
 *.sqlite
 *.log
@@ -8,3 +12,7 @@ uploads/
 .DS_Store
 Thumbs.db
 graph-api-error.log
+.agents/*.local.md
+# Scratch/debug scripts
+check_*.js
+fix_*.js

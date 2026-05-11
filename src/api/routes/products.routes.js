@@ -9,11 +9,9 @@ router.use(authMiddleware);
 
 /**
  * Validate volume_pricing tiers.
- * Rules: min_qty tăng dần, price giảm dần, min_qty >= 2, price > 0.
- * @returns {string|null} Error message or null if valid.
  */
 function validateVolumePricing(tiers, basePrice) {
-  if (!tiers || !Array.isArray(tiers) || tiers.length === 0) return null; // Empty = disabled
+  if (!tiers || !Array.isArray(tiers) || tiers.length === 0) return null;
 
   for (let i = 0; i < tiers.length; i++) {
     const t = tiers[i];
@@ -30,9 +28,6 @@ function validateVolumePricing(tiers, basePrice) {
   return null;
 }
 
-/**
- * Parse volume_pricing from DB string to array.
- */
 function parseVolumePricing(raw) {
   if (!raw) return null;
   try {
@@ -56,11 +51,11 @@ router.get('/', async (req, res) => {
     sql += ' ORDER BY name';
 
     const products = await db.all(sql, params);
-
-    // Parse volume_pricing JSON for each product
     const result = products.map(p => ({
       ...p,
       volume_pricing: parseVolumePricing(p.volume_pricing),
+      attributes: p.attributes ? (() => { try { return JSON.parse(p.attributes); } catch { return []; } })() : [],
+      images: p.images ? (() => { try { return JSON.parse(p.images); } catch { return []; } })() : [],
     }));
 
     res.json(result);
@@ -73,28 +68,45 @@ router.get('/', async (req, res) => {
 /** POST /api/products — Thêm sản phẩm */
 router.post('/', async (req, res) => {
   try {
-    const { name, sku, price, stock_quantity, image_url, volume_pricing } = req.body;
+    const { name, sku, price, stock_quantity, image_url, volume_pricing, description, attributes, images } = req.body;
     if (!name) return res.status(400).json({ error: 'Tên sản phẩm là bắt buộc.' });
 
-    const basePrice = Number(price) || 0;
+    // FIX: Reject giá = 0 hoặc âm (trước đây fallback về 0 gây đơn hàng sai)
+    const basePrice = Number(price);
+    if (!Number.isFinite(basePrice) || basePrice <= 0) {
+      return res.status(400).json({ error: 'Giá sản phẩm phải lớn hơn 0.' });
+    }
 
-    // Validate volume_pricing
+    const stockQty = Number(stock_quantity);
+    if (!Number.isFinite(stockQty) || stockQty < 0 || !Number.isInteger(stockQty)) {
+      return res.status(400).json({ error: 'Số lượng tồn kho phải là số nguyên không âm.' });
+    }
+
     const tiers = Array.isArray(volume_pricing) && volume_pricing.length > 0 ? volume_pricing : null;
     if (tiers) {
       const err = validateVolumePricing(tiers, basePrice);
       if (err) return res.status(400).json({ error: `Giá sỉ không hợp lệ: ${err}` });
     }
 
+    const attrsJson = Array.isArray(attributes) && attributes.length > 0 ? JSON.stringify(attributes) : null;
+    // images: array of URLs; first image is also set as image_url for backward compat
+    const imagesArr = Array.isArray(images) && images.length > 0 ? images : (image_url ? [image_url] : []);
+    const primaryImage = image_url || imagesArr[0] || null;
+    const imagesJson = imagesArr.length > 0 ? JSON.stringify(imagesArr) : null;
+
     const db = getDB();
     const result = await db.run(
-      'INSERT INTO Products (shop_id, name, sku, price, stock_quantity, image_url, volume_pricing) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [req.shop.shopId, name.trim(), sku || null, basePrice, stock_quantity || 0, image_url || null, tiers ? JSON.stringify(tiers) : null]
+      'INSERT INTO Products (shop_id, name, sku, price, stock_quantity, image_url, volume_pricing, description, attributes, images) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [req.shop.shopId, name.trim(), sku || null, basePrice, stockQty, primaryImage, tiers ? JSON.stringify(tiers) : null, description || null, attrsJson, imagesJson]
     );
 
     res.status(201).json({
       id: result.lastID, shop_id: req.shop.shopId,
       name: name.trim(), sku, price: basePrice,
-      stock_quantity: stock_quantity || 0, image_url,
+      stock_quantity: stockQty, image_url: primaryImage,
+      description: description || null,
+      attributes: attributes || [],
+      images: imagesArr,
       volume_pricing: tiers,
     });
   } catch (error) {
@@ -106,20 +118,32 @@ router.post('/', async (req, res) => {
 /** PUT /api/products/:id — Cập nhật sản phẩm */
 router.put('/:id', async (req, res) => {
   try {
-    const { name, sku, price, stock_quantity, image_url, volume_pricing } = req.body;
-    const basePrice = Number(price) || 0;
+    const { name, sku, price, stock_quantity, image_url, volume_pricing, description, attributes, images } = req.body;
+    // FIX: Reject giá = 0 hoặc âm khi update
+    const basePrice = Number(price);
+    if (!Number.isFinite(basePrice) || basePrice <= 0) {
+      return res.status(400).json({ error: 'Giá sản phẩm phải lớn hơn 0.' });
+    }
+    const stockQty = Number(stock_quantity);
+    if (!Number.isFinite(stockQty) || stockQty < 0 || !Number.isInteger(stockQty)) {
+      return res.status(400).json({ error: 'Số lượng tồn kho phải là số nguyên không âm.' });
+    }
 
-    // Validate volume_pricing
     const tiers = Array.isArray(volume_pricing) && volume_pricing.length > 0 ? volume_pricing : null;
     if (tiers) {
       const err = validateVolumePricing(tiers, basePrice);
       if (err) return res.status(400).json({ error: `Giá sỉ không hợp lệ: ${err}` });
     }
 
+    const attrsJson = Array.isArray(attributes) && attributes.length > 0 ? JSON.stringify(attributes) : null;
+    const imagesArr = Array.isArray(images) && images.length > 0 ? images : (image_url ? [image_url] : []);
+    const primaryImage = image_url || imagesArr[0] || null;
+    const imagesJson = imagesArr.length > 0 ? JSON.stringify(imagesArr) : null;
+
     const db = getDB();
     await db.run(
-      'UPDATE Products SET name=?, sku=?, price=?, stock_quantity=?, image_url=?, volume_pricing=? WHERE id=? AND shop_id=?',
-      [name, sku || null, basePrice, stock_quantity || 0, image_url || null, tiers ? JSON.stringify(tiers) : null, req.params.id, req.shop.shopId]
+      'UPDATE Products SET name=?, sku=?, price=?, stock_quantity=?, image_url=?, volume_pricing=?, description=?, attributes=?, images=? WHERE id=? AND shop_id=?',
+      [name, sku || null, basePrice, stockQty, primaryImage, tiers ? JSON.stringify(tiers) : null, description || null, attrsJson, imagesJson, req.params.id, req.shop.shopId]
     );
     res.json({ message: 'Đã cập nhật.' });
   } catch (error) {

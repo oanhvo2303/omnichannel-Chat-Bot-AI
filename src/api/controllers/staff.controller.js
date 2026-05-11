@@ -113,4 +113,87 @@ const goOffline = async (req, res) => {
   }
 };
 
-module.exports = { registerStaff, loginStaff, listStaff, goOffline };
+// ---- DELETE /api/staff/:id — Owner/Manager xóa nhân viên ----
+const deleteStaff = async (req, res) => {
+  try {
+    const db = getDB();
+    const shopId = req.shop.shopId;
+    const userRole = (req.shop.role || '').toLowerCase();
+    const staffIdToDelete = parseInt(req.params.id);
+
+    // Chỉ owner hoặc manager được xóa
+    if (userRole === 'staff') {
+      return res.status(403).json({ error: 'Bạn không có quyền xóa nhân viên.' });
+    }
+
+    // Không cho xóa chính mình
+    if (req.shop.staffId === staffIdToDelete) {
+      return res.status(400).json({ error: 'Không thể tự xóa chính mình.' });
+    }
+
+    // Kiểm tra nhân viên thuộc shop
+    const target = await db.get('SELECT id, name, role FROM Staff WHERE id = ? AND shop_id = ?', [staffIdToDelete, shopId]);
+    if (!target) return res.status(404).json({ error: 'Nhân viên không tồn tại.' });
+
+    // Không cho xóa owner
+    if (target.role === 'owner') {
+      return res.status(403).json({ error: 'Không thể xóa tài khoản Chủ Shop.' });
+    }
+
+    await db.run('DELETE FROM Staff WHERE id = ? AND shop_id = ?', [staffIdToDelete, shopId]);
+    console.log(`[STAFF] ❌ Đã xóa nhân viên #${staffIdToDelete} (${target.name}) khỏi Shop #${shopId}`);
+
+    res.json({ message: `Đã xóa nhân viên ${target.name}.` });
+  } catch (error) {
+    console.error('[STAFF] Lỗi xóa nhân viên:', error.message);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+};
+
+// ---- PATCH /api/staff/:id/role — Đổi quyền nhân viên ----
+const updateStaffRole = async (req, res) => {
+  try {
+    const db = getDB();
+    const shopId = req.shop.shopId;
+    const userRole = (req.shop.role || '').toLowerCase();
+    const staffIdToUpdate = parseInt(req.params.id);
+    const { role: newRole } = req.body;
+
+    console.log(`[STAFF] PATCH role request: staffId=${staffIdToUpdate}, newRole=${newRole}, userRole=${userRole}, shopId=${shopId}`);
+
+
+    // Chuẩn hóa roles theo DB schema (sqliteConnection.js): owner, admin, staff
+    const validRoles = ['staff', 'admin', 'owner'];
+    if (!newRole || !validRoles.includes(newRole)) {
+      return res.status(400).json({ error: `Role không hợp lệ. Chọn: ${validRoles.join(', ')}` });
+    }
+
+    // Chỉ owner/manager được đổi
+    if (userRole === 'staff') {
+      return res.status(403).json({ error: 'Bạn không có quyền đổi quyền nhân viên.' });
+    }
+
+    // Không cho staff tự nâng quyền
+    if (req.shop.staffId === staffIdToUpdate) {
+      return res.status(400).json({ error: 'Không thể tự đổi quyền chính mình.' });
+    }
+
+    // Chỉ owner mới được phong owner khác
+    if (newRole === 'owner' && userRole !== 'owner') {
+      return res.status(403).json({ error: 'Chỉ Chủ Shop mới được phong quyền Chủ Shop.' });
+    }
+
+    const target = await db.get('SELECT id, name, role FROM Staff WHERE id = ? AND shop_id = ?', [staffIdToUpdate, shopId]);
+    if (!target) return res.status(404).json({ error: 'Nhân viên không tồn tại.' });
+
+    await db.run('UPDATE Staff SET role = ? WHERE id = ? AND shop_id = ?', [newRole, staffIdToUpdate, shopId]);
+    console.log(`[STAFF] 🔄 Đổi quyền #${staffIdToUpdate} (${target.name}): ${target.role} → ${newRole} | Shop #${shopId}`);
+
+    res.json({ message: `Đã đổi quyền ${target.name} thành ${newRole}.`, staff: { id: staffIdToUpdate, role: newRole } });
+  } catch (error) {
+    console.error('[STAFF] Lỗi đổi quyền:', error.message);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+};
+
+module.exports = { registerStaff, loginStaff, listStaff, goOffline, deleteStaff, updateStaffRole };

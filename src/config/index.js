@@ -29,14 +29,14 @@ const config = {
   },
   // JWT Authentication
   jwt: {
-    secret: process.env.JWT_SECRET || 'omnichannel-bot-default-secret-change-me',
+    secret: process.env.JWT_SECRET, // Không fallback — sẽ crash lúc start nếu thiếu (bảo mật)
     expiresIn: '7d',
   },
 };
 
 // ---- Startup Validation ----
 // Fail fast: if critical secrets are missing, crash on startup rather than at runtime.
-const requiredVars = ['FB_VERIFY_TOKEN', 'FB_APP_SECRET', 'GEMINI_API_KEY'];
+const requiredVars = ['FB_VERIFY_TOKEN', 'FB_APP_SECRET', 'JWT_SECRET'];
 const missingVars = requiredVars.filter((key) => !process.env[key]);
 
 if (missingVars.length > 0) {
