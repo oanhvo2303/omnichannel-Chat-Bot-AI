@@ -40,6 +40,10 @@ const faqRoutes = require('./api/routes/faq.routes');             // FAQ / AI tr
 const createApp = () => {
   const app = express();
 
+  // FIX: Trust proxy — đứng sau Nginx reverse proxy
+  // Cần thiết để express-rate-limit đọc đúng IP từ X-Forwarded-For
+  app.set('trust proxy', 1);
+
   // =============================================
   // Global Middleware
   // =============================================
