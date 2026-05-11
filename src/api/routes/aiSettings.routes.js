@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 const express = require('express');
 const { getDB } = require('../../infra/database/sqliteConnection');
@@ -65,9 +65,15 @@ router.patch('/', requireOwnerOrAdmin, async (req, res) => {
     }
 
     if (ai_quota_limit !== undefined) {
+      // P3 fix: tenant KHÔNG được tự set unlimited (-1) hoặc quota tuỳ ý
+      // Quota phải do billing/admin quản lý — clamp trong khoảng hợp lệ
+      const quotaNum = parseInt(ai_quota_limit, 10);
+      if (!Number.isFinite(quotaNum) || quotaNum < 100 || quotaNum > 10000) {
+        return res.status(400).json({ error: 'Quota hợp lệ phải từ 100 đến 10,000 tin/tháng. Liên hệ admin để tăng giới hạn.' });
+      }
       await db.run(
         'UPDATE Shops SET ai_quota_limit = ? WHERE id = ?',
-        [ai_quota_limit, req.shop.shopId]
+        [quotaNum, req.shop.shopId]
       );
     }
 

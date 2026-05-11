@@ -28,18 +28,38 @@ async function executeAIOrder(args, shopId, customerId) {
   const db = getDB();
   const { product_name, customer_phone, customer_address, customer_name } = args;
 
-  // Bug 5 fix: Validate quantity — phòng AI trả số âm/0/string/Infinity
+  // Quantity: clamp [1, 999]
   let quantity = parseInt(args.quantity, 10);
   if (!Number.isFinite(quantity) || quantity < 1) quantity = 1;
-  if (quantity > 999) quantity = 999; // Hard cap chống order ảo số lượng khủng
+  if (quantity > 999) quantity = 999;
+
+  // P1b fix: Validate phone + address từ Gemini — không tin blindly
+  const phoneClean = String(customer_phone || '').replace(/[\s\-\.\(\)]/g, '');
+  const phoneValid = /^(0|\+84)(3|5|7|8|9)\d{8}$/.test(phoneClean);
+  if (!phoneValid) {
+    return {
+      success: false,
+      error: 'invalid_phone',
+      message: `Số điện thoại "${customer_phone}" chưa đúng định dạng VN 10 số. Bạn vui lòng cho mình xin lại số điện thoại nhé! 📱`,
+    };
+  }
+
+  const addressStr = String(customer_address || '').trim();
+  if (addressStr.length < 10) {
+    return {
+      success: false,
+      error: 'invalid_address',
+      message: `Địa chỉ "${customer_address}" có vẻ chưa đủ thông tin. Bạn cho mình địa chỉ đầy đủ (số nhà, đường, phường/xã, quận/huyện) nhé! 📍`,
+    };
+  }
 
   console.log('═'.repeat(60));
   console.log('[ORDER EXECUTOR] 🤖 AI yêu cầu tạo đơn hàng');
   console.log(`[ORDER EXECUTOR]   📦 Shop #${shopId} | 👤 Khách #${customerId}`);
   console.log(`[ORDER EXECUTOR]   🛍️  SP: "${product_name}" x${quantity}${args.quantity != quantity ? ` (gốc: ${args.quantity} → clamped)` : ''}`);
   console.log(`[ORDER EXECUTOR]   👤 Tên người nhận: ${customer_name || '(dùng tên Facebook)'}`);
-  console.log(`[ORDER EXECUTOR]   📱 SĐT: ${customer_phone}`);
-  console.log(`[ORDER EXECUTOR]   📍 Địa chỉ: ${customer_address}`);
+  console.log(`[ORDER EXECUTOR]   📱 SĐT: ${phoneClean}`);
+  console.log(`[ORDER EXECUTOR]   📍 Địa chỉ: ${addressStr}`);
   console.log('═'.repeat(60));
 
   try {

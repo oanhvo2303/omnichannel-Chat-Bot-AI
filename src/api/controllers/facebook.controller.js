@@ -579,11 +579,11 @@ async function processInboxMessage(pageId, senderId, messageText, imageData = nu
         // ★ Hiển thị "đang gõ..." trên Messenger để khách biết đang được phản hồi
         await sendTypingOn(senderId, shop.page_access_token);
 
-        // ★ Lấy lịch sử hội thoại — Full History Mode hoặc 10 tin gần nhất
+        // ★ Lấy lịch sử hội thoại — P1c fix: loại trừ tin hiện tại (id < msgResult.lastID) để tránh lặp context
         const HISTORY_LIMIT = shop.ai_full_history ? 300 : 10;
         const historyRows = await db.all(
-          "SELECT sender, text FROM Messages WHERE customer_id = ? ORDER BY timestamp DESC LIMIT ?",
-          [customer.id, HISTORY_LIMIT]
+          `SELECT sender, text FROM Messages WHERE customer_id = ? AND id < ? ORDER BY timestamp DESC LIMIT ?`,
+          [customer.id, msgResult.lastID, HISTORY_LIMIT]
         );
         historyRows.reverse();
         console.log(`[AI TRACE] 📜 History mode: ${shop.ai_full_history ? 'FULL (' + historyRows.length + ' msgs)' : 'COMPACT (' + historyRows.length + '/10 msgs)'}`);

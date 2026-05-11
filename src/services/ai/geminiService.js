@@ -559,6 +559,10 @@ CHÚ Ý VỀ PHONG CÁCH TIN NHẮN:
       const response = result.response;
       const elapsed = Date.now() - startTime;
 
+      // ★ Step 2: Kiểm tra xem có Function Call không
+      const candidate = response.candidates?.[0];
+      const parts = candidate?.content?.parts || [];
+
       // Bug 4 fix: filter() để xử lý TẤT CẢ function calls (không chỉ cái đầu tiên)
       const functionCallParts = parts.filter(p => p.functionCall);
 
@@ -604,9 +608,9 @@ CHÚ Ý VỀ PHONG CÁCH TIN NHẮN:
         console.log(`[GEMINI AGENTIC] ✅ Final response sau ${totalElapsed}ms: "${finalText?.substring(0, 100)}..."`);
         console.log('─'.repeat(60));
 
-        const anySuccess = toolCalls.some(t => t.result?.success);
+        const orderSuccess = toolCalls.some(t => t.name === 'create_system_order' && t.result?.success);
         return {
-          intent: anySuccess ? 'ĐẶT_HÀNG' : 'HỖ_TRỢ',
+          intent: orderSuccess ? 'ĐẶT_HÀNG' : 'HỖ_TRỢ',
           reply: finalText,
           toolCalls,
         };

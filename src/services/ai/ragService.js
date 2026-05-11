@@ -46,22 +46,25 @@ async function retrieveFAQ(shopId, messageText, integrationId = null) {
 
   if (allFaqs.length === 0) return [];
 
-  // Tokenize: bỏ stopwords, giữ meaningful keywords ≥ 2 chars
-  const STOP_WORDS = new Set(['và', 'hay', 'hoặc', 'thì', 'của', 'là', 'có', 'cho', 'được', 'không', 'bạn', 'em', 'anh', 'chị', 'ạ', 'nha', 'nhé', 'dạ', 'ơi', 'vậy', 'ạ', 'thế', 'nào', 'này', 'đó', 'rồi', 'ở', 'với', 'để', 'mà', 'thì', 'đã', 'sẽ']);
-  const words = messageText
-    .toLowerCase()
-    .replace(/[?!.,;:'"()]/g, ' ')
+  // P2a fix: normalize dấu tiếng Việt → ASCII để match không phân biệt dấu
+  // VD: "gio hang" khớp "giỏ hàng", "ship" khớp "giao"
+  const normalizeVN = (str) => (str || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd').toLowerCase();
+
+  const STOP_WORDS = new Set(['va', 'hay', 'hoac', 'thi', 'cua', 'la', 'co', 'cho', 'duoc', 'khong', 'ban', 'em', 'anh', 'chi', 'a', 'nha', 'nhe', 'da', 'oi', 'vay', 'the', 'nao', 'nay', 'do', 'roi', 'o', 'voi', 'de', 'ma', 'se']);
+
+  const normalizedMsg = normalizeVN(messageText).replace(/[?!.,;:'"()]/g, ' ');
+  const words = normalizedMsg
     .split(/\s+/)
     .filter(w => w.length >= 2 && !STOP_WORDS.has(w));
 
   if (words.length === 0) {
-    // Không có keyword → trả về 3 FAQ mặc định (general)
     return allFaqs.slice(0, 3).map(f => ({ ...f, score: 0.3 }));
   }
 
-  // Score từng FAQ dựa trên số keyword match
+  // Score từng FAQ dựa trên số keyword match (cả normalized)
   const scored = allFaqs.map(faq => {
-    const searchText = (faq.question + ' ' + faq.answer + ' ' + (faq.category || '')).toLowerCase();
+    const raw = (faq.question + ' ' + faq.answer + ' ' + (faq.category || '')).toLowerCase();
+    const searchText = normalizeVN(raw); // P2a: normalize FAQ text
     let hits = 0;
     let exactPhraseBonus = 0;
 
@@ -81,7 +84,6 @@ async function retrieveFAQ(shopId, messageText, integrationId = null) {
     if (integrationId && faq.integration_ids) {
       try {
         const ids = JSON.parse(faq.integration_ids);
-        // Bug 3 fix: coerce cả 2 về string để tránh number vs string mismatch
         if (Array.isArray(ids) && ids.length > 0 && !ids.map(String).includes(String(integrationId))) {
           return { ...faq, score: -1 }; // Không thuộc page này → loại
         }
