@@ -2,6 +2,7 @@
 
 const config = require('../../config');
 const { analyzeCustomerMessage, advancedAnalyzeMessage, agenticAnalyzeMessage, AI_ERROR_CODES } = require('../../services/ai/geminiService');
+const { buildRAGContext, parseRAGResponse, shouldEscalate, buildEscalationReply, markNeedsHuman } = require('../../services/ai/ragService');
 const crypto = require('crypto');
 const { getDB } = require('../../infra/database/sqliteConnection');
 const { getIO } = require('../../infra/socket/socketManager');
@@ -664,16 +665,47 @@ ${knowledgeEntries.join('\n\n')}
             console.log(`[AI TRACE] 🧠 Knowledge Base injected: ${rules.length} rules → ${knowledgeBase.length} chars`);
           }
 
-          // Merge knowledge base + shipping info vào product catalog
-          const catalogWithShipping = `${productCatalog}${shippingInfo}`;
-          const enrichedCatalog = knowledgeBase
-            ? `${catalogWithShipping}\n\n${knowledgeBase}`
-            : catalogWithShipping;
+          // ★ RAG: Retrieve relevant FAQs + build context
+          const ragCtx = await buildRAGContext(shop.id, messageText, shop.integration_id || null);
+          const ragFaqBlock = ragCtx.faqContext;    // FAQ Q&A block
+          const ragInstructions = ragCtx.ragInstructions; // Confidence + no-hallucination rules
+          if (ragCtx.relevantFaqs.length > 0) {
+            console.log(`[RAG] 📚 Injecting ${ragCtx.relevantFaqs.length} FAQs (scores: ${ragCtx.relevantFaqs.map(f => f.score?.toFixed(2)).join(', ')})`);
+          }
 
-          console.log(`[AI TRACE] 🤖 Gọi Gemini AGENTIC cho Khách #${customer.id} (${customer.name}) | History: ${historyRows.length} msgs | Products: ${products.length} | Knowledge: ${shop.bot_rules_mode === 'knowledge' ? rules.length + ' rules' : 'OFF'} | Key: ${shopLicense?.gemini_api_key ? 'SHOP' : 'GLOBAL'} | Quota: ${shopLicense?.ai_messages_used || 0}/${shopLicense?.ai_quota_limit || 0}`);
-          const analysis = await agenticAnalyzeMessage(messageText, shop.ai_system_prompt, historyRows, { shopId: shop.id, customerId: customer.id, customerName: customer.name, shopApiKey: shopLicense?.gemini_api_key || null }, enrichedCatalog, imageData);
-          replyText = analysis.reply;
-          replyIntent = analysis.intent;
+          // Merge knowledge base + shipping info + FAQ vào product catalog
+          const catalogWithShipping = `${productCatalog}${shippingInfo}`;
+          const enrichedCatalog = [
+            catalogWithShipping,
+            knowledgeBase || '',
+            ragFaqBlock,
+          ].filter(Boolean).join('\n\n');
+
+          // Merge RAG instructions vào system prompt
+          const enrichedSystemPrompt = shop.ai_system_prompt
+            ? `${shop.ai_system_prompt}\n\n${ragInstructions}`
+            : ragInstructions;
+
+          console.log(`[AI TRACE] 🤖 Gọi Gemini AGENTIC cho Khách #${customer.id} (${customer.name}) | History: ${historyRows.length} msgs | Products: ${products.length} | FAQs: ${ragCtx.relevantFaqs.length} | Knowledge: ${shop.bot_rules_mode === 'knowledge' ? rules.length + ' rules' : 'OFF'} | Key: ${shopLicense?.gemini_api_key ? 'SHOP' : 'GLOBAL'} | Quota: ${shopLicense?.ai_messages_used || 0}/${shopLicense?.ai_quota_limit || 0}`);
+          const rawAnalysis = await agenticAnalyzeMessage(enrichedSystemPrompt, messageText, historyRows, { shopId: shop.id, customerId: customer.id, customerName: customer.name, shopApiKey: shopLicense?.gemini_api_key || null }, enrichedCatalog, imageData);
+
+          // ★ RAG Confidence Guard
+          const ragResult = parseRAGResponse(rawAnalysis);
+          const escalation = shouldEscalate(ragResult);
+
+          if (escalation.shouldEscalate && !rawAnalysis.toolCalls?.length) {
+            // Low confidence → chuyển nhân viên thật
+            console.log(`[RAG] ⚠️ Escalating customer #${customer.id}: ${escalation.reason}`);
+            replyText = buildEscalationReply(customer.name);
+            replyIntent = 'ESCALATE';
+            // Mark customer cần nhân viên (không pause AI vĩnh viễn — chỉ flag)
+            markNeedsHuman(customer.id, shop.id, escalation.reason);
+          } else {
+            replyText = ragResult.reply;
+            replyIntent = ragResult.intent;
+          }
+
+          const analysis = rawAnalysis; // Giữ toolCalls để xử lý bên dưới
 
           // Increment AI usage counter
           await db.run('UPDATE Shops SET ai_messages_used = ai_messages_used + 1 WHERE id = ?', [shop.id]);
