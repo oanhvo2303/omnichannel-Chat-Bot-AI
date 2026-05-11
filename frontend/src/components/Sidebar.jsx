@@ -7,7 +7,7 @@ import {
   MessageSquare, Bot, Package, Tags, Contact,
   BarChart3, Megaphone, ChevronLeft, ChevronRight, Zap, Sparkles,
   LogOut, Settings, PanelLeftClose, PanelLeft, Link2, Activity, Send, UserCog, ClipboardList, MessageSquareReply,
-  Crown, X, Images, HelpCircle,
+  Crown, X, Images, HelpCircle, Truck,
 } from "lucide-react";
 
 const menuItems = [
@@ -26,6 +26,7 @@ const menuItems = [
   { id: "products", label: "Sản phẩm & Kho", icon: Package, href: "/settings/products" },
   { id: "tags", label: "Quản lý Thẻ", icon: Tags, href: "/settings/tags" },
   { id: "quick-replies", label: "Tin nhắn Mẫu", icon: Zap, href: "/settings/quick-replies" },
+  { id: "shipping", label: "Vận chuyển", icon: Truck, href: "/settings/shipping" },
   { id: "staff", label: "Nhân sự", icon: UserCog, href: "/settings/staff" },
   { id: "integrations", label: "Kết nối Đa kênh", icon: Link2, href: "/settings/integrations" },
   { id: "page-health", label: "Page Health", icon: Activity, href: "/settings/page-health" },
