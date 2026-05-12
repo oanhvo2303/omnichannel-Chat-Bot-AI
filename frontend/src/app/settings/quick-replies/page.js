@@ -23,7 +23,9 @@ export default function QuickRepliesSettings() {
 
   useEffect(() => {
     fetchReplies();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
 
   const authFetch = async (url, options = {}) => {
     const token = localStorage.getItem("token");

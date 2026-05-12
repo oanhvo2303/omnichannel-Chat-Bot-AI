@@ -191,7 +191,6 @@ function MediaCard({ item, onDelete }) {
             <span className="text-xs text-zinc-400">Preview lỗi</span>
           </div>
         ) : (
-          /* eslint-disable-next-line @next/next/no-img-element */
           <img
             src={item.url}
             alt={item.filename}

@@ -74,7 +74,8 @@ export default function RemarketingPage() {
     } catch (err) {
       toast({ title: "❌ Lỗi tải cài đặt", description: err.message, variant: "destructive" });
     } finally { setLoading(false); }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- authFetch/toast are stable module-level refs
+  }, []);
+
 
   // FIX: fetchSettings in deps array — satisfies react-hooks/exhaustive-deps
   useEffect(() => { fetchSettings(); }, [fetchSettings]);

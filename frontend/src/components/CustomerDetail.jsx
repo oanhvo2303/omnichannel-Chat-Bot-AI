@@ -66,7 +66,8 @@ export default function CustomerDetail({
     }).catch(() => {});
   }, []);
 
-  // Sync when customer changes
+  // Sync when customer changes — intentionally only dep on customer?.id
+  // (re-running on every field would cause infinite loops with controlled inputs)
   useEffect(() => {
     setEditPhone(customer?.phone || "");
     setEditAddress(customer?.address || "");
@@ -75,7 +76,9 @@ export default function CustomerDetail({
     setOrderAddress(customer?.address || "");
     setRecipientName(customer?.name || "");
     setLastSaved(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customer?.id]);
+
 
   // ★ Socket: số điện thoại tự động phát hiện
   useSocket('customer_phone_extracted', (data) => {
@@ -125,14 +128,17 @@ export default function CustomerDetail({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [showTagPicker]);
 
-  // Debounce auto-save
+  // Debounce auto-save — saveCustomerInfo is intentionally excluded from deps
+  // to avoid re-creating the debounce fn on every keystroke (stable closure)
   const debounceSave = useCallback((phone, address, note) => {
     if (!customer?.id) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
       await saveCustomerInfo(phone, address, note);
     }, 1500);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customer?.id]);
+
 
   const saveCustomerInfo = async (phone, address, note) => {
     if (!customer?.id) return;

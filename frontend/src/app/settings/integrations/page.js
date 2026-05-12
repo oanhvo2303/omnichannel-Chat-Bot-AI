@@ -6,7 +6,7 @@ import { toast } from "@/hooks/use-toast";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  Link2, ExternalLink, CheckCircle2, XCircle, Plug, Unplug, ShieldCheck, Globe, Loader2, RefreshCw, Bot, Save, EyeOff
+  Link2, ExternalLink, CheckCircle2, XCircle, Plug, Unplug, ShieldCheck, Globe, Loader2, RefreshCw, Bot, Save, EyeOff, Zap, BookOpen
 } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
@@ -126,6 +126,8 @@ export default function IntegrationsPage() {
           is_ai_active: !!i.is_ai_active,
           ai_system_prompt: i.ai_system_prompt || "",
           auto_hide_comments: i.auto_hide_comments || 'none',
+          bot_rules_mode: i.bot_rules_mode || 'keyword',
+          ai_full_history: !!i.ai_full_history,
         });
       });
       setConnections(map);
@@ -218,7 +220,7 @@ export default function IntegrationsPage() {
     try {
       const res = await authFetch(`${API_BASE}/api/integrations/${conn.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ is_ai_active: conn.is_ai_active, ai_system_prompt: conn.ai_system_prompt, auto_hide_comments: conn.auto_hide_comments })
+        body: JSON.stringify({ is_ai_active: conn.is_ai_active, ai_system_prompt: conn.ai_system_prompt, auto_hide_comments: conn.auto_hide_comments, bot_rules_mode: conn.bot_rules_mode, ai_full_history: conn.ai_full_history })
       });
       if (res.ok) toast({ title: "✅ Đã lưu cấu hình", description: `Cập nhật thành công cho ${conn.page_name}` });
       else toast({ title: "❌ Lỗi", description: "Bị lỗi khi lưu cấu hình.", variant: "destructive" });
@@ -360,7 +362,7 @@ export default function IntegrationsPage() {
                                 </label>
                               </div>
                               {conn.is_ai_active && (
-                                <div className="space-y-2 mt-1 animate-in fade-in slide-in-from-top-1">
+                                <div className="space-y-3 mt-1 animate-in fade-in slide-in-from-top-1">
                                   <textarea rows={2} value={conn.ai_system_prompt || ''}
                                     onChange={(e) => setConnections(p => {
                                       const arr = [...p[platform.id]];
@@ -370,6 +372,90 @@ export default function IntegrationsPage() {
                                     })}
                                     placeholder="Ví dụ: Bạn là nhân viên bán hàng..."
                                     className="w-full text-[10px] p-2 rounded-md border border-indigo-200 outline-none focus:ring-1 focus:ring-indigo-500/30 resize-none font-medium bg-white" />
+
+                                  {/* ═══ Bot Rules Mode Toggle ═══ */}
+                                  <div className="bg-violet-50/60 rounded-lg p-2.5 border border-violet-100">
+                                    <div className="flex items-center gap-1 text-[10px] font-bold text-violet-700 mb-2">
+                                      <BookOpen className="w-3 h-3" /> Chế độ Kịch bản Bot
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-1.5">
+                                      <button
+                                        onClick={() => setConnections(p => {
+                                          const arr = [...p[platform.id]];
+                                          const idx = arr.findIndex(c => c.id === conn.id);
+                                          arr[idx].bot_rules_mode = 'keyword';
+                                          return { ...p, [platform.id]: arr };
+                                        })}
+                                        className={cn(
+                                          "flex items-center justify-center gap-1.5 py-2 px-2 rounded-md text-[10px] font-bold transition-all border",
+                                          conn.bot_rules_mode === 'keyword'
+                                            ? "bg-amber-500 text-white border-amber-500 shadow-sm shadow-amber-500/20"
+                                            : "bg-white text-zinc-500 border-zinc-200 hover:border-amber-300 hover:text-amber-600"
+                                        )}>
+                                        <Zap className="w-3 h-3" />
+                                        Từ khóa cứng
+                                      </button>
+                                      <button
+                                        onClick={() => setConnections(p => {
+                                          const arr = [...p[platform.id]];
+                                          const idx = arr.findIndex(c => c.id === conn.id);
+                                          arr[idx].bot_rules_mode = 'knowledge';
+                                          return { ...p, [platform.id]: arr };
+                                        })}
+                                        className={cn(
+                                          "flex items-center justify-center gap-1.5 py-2 px-2 rounded-md text-[10px] font-bold transition-all border",
+                                          conn.bot_rules_mode === 'knowledge'
+                                            ? "bg-violet-500 text-white border-violet-500 shadow-sm shadow-violet-500/20"
+                                            : "bg-white text-zinc-500 border-zinc-200 hover:border-violet-300 hover:text-violet-600"
+                                        )}>
+                                        <BookOpen className="w-3 h-3" />
+                                        AI + Kiến thức
+                                      </button>
+                                    </div>
+                                    <p className="text-[9px] text-violet-500 mt-1.5 leading-relaxed">
+                                      {conn.bot_rules_mode === 'keyword'
+                                        ? '⚡ Khách nhắn trúng từ khóa → Bot trả lời cứng ngay. Không trúng → AI xử lý.'
+                                        : '🧠 100% AI trả lời. Kịch bản Bot trở thành kho kiến thức để AI tham khảo & trả lời tự nhiên.'}
+                                    </p>
+                                  </div>
+
+                                  {/* ★ Bộ nhớ Toàn bộ Lịch sử */}
+                                  <div className="bg-emerald-50/60 rounded-lg p-2.5 border border-emerald-100 mt-1">
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex-1 mr-3">
+                                        <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-700">
+                                          <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/></svg>
+                                          Bộ nhớ Toàn bộ Lịch sử
+                                        </div>
+                                        <p className="text-[9px] text-emerald-600 mt-0.5 leading-relaxed">
+                                          {conn.ai_full_history
+                                            ? '🗣️ AI đọc đến 300 tin nhắn cũ — hiểu toàn bộ câu chuyện với khách.'
+                                            : '⚡ Tiết kiệm token: chỉ đọc 10 tin nhắn gần nhất.'}
+                                        </p>
+                                      </div>
+                                      <button
+                                        onClick={() => setConnections(p => {
+                                          const arr = [...p[platform.id]];
+                                          const idx = arr.findIndex(c => c.id === conn.id);
+                                          arr[idx] = { ...arr[idx], ai_full_history: !arr[idx].ai_full_history };
+                                          return { ...p, [platform.id]: arr };
+                                        })}
+                                        className={cn(
+                                          "relative w-10 h-5 rounded-full transition-all duration-300 flex-shrink-0",
+                                          conn.ai_full_history ? "bg-emerald-500" : "bg-zinc-200"
+                                        )}>
+                                        <span className={cn(
+                                          "absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all duration-300",
+                                          conn.ai_full_history ? "left-5" : "left-0.5"
+                                        )} />
+                                      </button>
+                                    </div>
+                                    {conn.ai_full_history && (
+                                      <p className="text-[9px] text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 mt-1.5">
+                                        ⚠️ Tốn nhiều token hơn. Chỉ bật khi khách có lịch sử hội thoại dài cần ngữ cảnh chính xác.
+                                      </p>
+                                    )}
+                                  </div>
                                 </div>
                               )}
                               

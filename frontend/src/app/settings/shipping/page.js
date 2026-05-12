@@ -76,7 +76,8 @@ export default function ShippingSettings() {
 
   // ─── Phí ship mặc định (Shop Settings) ───
   const [defaultShipFee, setDefaultShipFee] = useState(30000);
-  const [freeShipThreshold, setFreeShipThreshold] = useState(500000);
+  const [freeShipThreshold, setFreeShipThreshold] = useState(0);
+  const [freeShipMinQty, setFreeShipMinQty] = useState(0);
   const [savingShipFee, setSavingShipFee] = useState(false);
 
   useEffect(() => {
@@ -143,7 +144,8 @@ export default function ShippingSettings() {
       if (res.ok) {
         const data = await res.json();
         setDefaultShipFee(data.default_shipping_fee ?? 30000);
-        setFreeShipThreshold(data.free_shipping_threshold ?? 500000);
+        setFreeShipThreshold(data.free_shipping_threshold ?? 0);
+        setFreeShipMinQty(data.free_shipping_min_quantity ?? 0);
       }
     } catch (err) {
       console.error("[ShipFee] Lỗi tải:", err);
@@ -156,7 +158,7 @@ export default function ShippingSettings() {
       const res = await authFetch(`${API_BASE}/api/orders/shop-settings`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ default_shipping_fee: defaultShipFee, free_shipping_threshold: freeShipThreshold }),
+        body: JSON.stringify({ default_shipping_fee: defaultShipFee, free_shipping_threshold: freeShipThreshold, free_shipping_min_quantity: freeShipMinQty }),
       });
       if (res.ok) {
         toast({ title: "✅ Đã lưu", description: "Cài đặt phí ship mặc định đã được cập nhật." });
@@ -283,15 +285,34 @@ export default function ShippingSettings() {
               />
               <p className="text-[10px] text-muted-foreground">Sẽ tự động điền vào form tạo đơn</p>
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">Mức miễn phí ship (VNĐ)</Label>
-              <Input 
-                type="number" min={0} placeholder="500000"
-                value={freeShipThreshold || ''}
-                onChange={(e) => setFreeShipThreshold(parseInt(e.target.value) || 0)}
-                className="h-9 text-sm"
-              />
-              <p className="text-[10px] text-muted-foreground">Đơn ≥ mức này = tự động freeship</p>
+          </div>
+
+          {/* Freeship conditions */}
+          <div className="bg-emerald-50/50 border border-emerald-200 rounded-xl p-4 space-y-3">
+            <p className="text-xs font-bold text-emerald-700 flex items-center gap-1.5">
+              🎉 Điều kiện Miễn phí ship <span className="text-[10px] font-normal text-emerald-500">(thỏa 1 trong 2 = freeship)</span>
+            </p>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold text-emerald-700">💰 Giá trị đơn tối thiểu (VNĐ)</Label>
+                <Input 
+                  type="number" min={0} placeholder="500000"
+                  value={freeShipThreshold || ''}
+                  onChange={(e) => setFreeShipThreshold(parseInt(e.target.value) || 0)}
+                  className="h-9 text-sm border-emerald-200 focus:ring-emerald-500/20"
+                />
+                <p className="text-[10px] text-emerald-600">Đơn ≥ mức này = freeship. Đặt 0 = tắt</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold text-emerald-700">📦 Số lượng tối thiểu (sp)</Label>
+                <Input 
+                  type="number" min={0} placeholder="3"
+                  value={freeShipMinQty || ''}
+                  onChange={(e) => setFreeShipMinQty(parseInt(e.target.value) || 0)}
+                  className="h-9 text-sm border-emerald-200 focus:ring-emerald-500/20"
+                />
+                <p className="text-[10px] text-emerald-600">Mua ≥ số lượng này = freeship. Đặt 0 = tắt</p>
+              </div>
             </div>
           </div>
         </CardContent>

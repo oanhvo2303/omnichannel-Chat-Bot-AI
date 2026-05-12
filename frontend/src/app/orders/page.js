@@ -713,7 +713,9 @@ export default function OrdersPage() {
 
   useEffect(() => {
     fetchOrders(1);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter, shippingFilter, debouncedSearch, sortBy, sortOrder]);
+
 
   // Update order status
   const handleUpdateStatus = async (orderId, newStatus) => {

@@ -159,6 +159,11 @@ const initSQLite = async () => {
     try { await db.exec("ALTER TABLE Customers ADD COLUMN remarketing_next_at DATETIME"); } catch { /* exists */ }
     try { await db.exec("ALTER TABLE Customers ADD COLUMN remarketing_cycle_index INTEGER DEFAULT 0"); } catch { /* exists */ }
     try { await db.exec("ALTER TABLE Customers ADD COLUMN remarketing_started_at DATETIME"); } catch { /* exists */ }
+    // Escalation tracking: ghi lại khi AI chuyển nhân viên (không khoá AI vĩnh viễn)
+    try { await db.exec("ALTER TABLE Customers ADD COLUMN needs_human_at DATETIME"); } catch { /* exists */ }
+    try { await db.exec("ALTER TABLE Customers ADD COLUMN escalation_reason TEXT"); } catch { /* exists */ }
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_customer_needs_human ON Customers(shop_id, needs_human_at) WHERE needs_human_at IS NOT NULL;`).catch(() => {});
+
 
     // =============================================
     // Bảng Messages (thuộc về 1 Shop — denormalized)

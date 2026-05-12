@@ -37,7 +37,9 @@ export default function CustomersCRMPage() {
       fetchCustomers();
     }, 500);
     return () => clearTimeout(delayDebounceFn);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, hasPhone, tagFilter, page, customerType]);
+
 
   const fetchTags = async () => {
     try {

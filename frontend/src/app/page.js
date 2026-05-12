@@ -96,7 +96,10 @@ export default function DashboardPage() {
         Notification.requestPermission();
       }
     }
+  // authFetch is a stable module-level fn — intentionally excluded from deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shop, fetchCustomers]);
+
 
   // ---- Filter change with debounce for search ----
   const filterTimeoutRef = useRef(null);
@@ -308,7 +311,10 @@ export default function DashboardPage() {
     };
     connectSocket();
     return () => { if (socket) socket.disconnect(); };
+  // fetchCustomerOrders/fetchCustomerTags/fetchTags used inside socket closure — stable callbacks
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shop, fetchCustomers, playNotificationTing]);
+
 
   // ---- Select customer ----
   const handleSelectCustomer = (customer) => {

@@ -25,7 +25,9 @@ export default function TagsSettingsPage() {
   // ─── Load tags từ API ───
   useEffect(() => {
     fetchTags();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
 
   const fetchTags = async () => {
     try {

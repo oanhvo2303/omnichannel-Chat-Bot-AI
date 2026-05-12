@@ -12,7 +12,7 @@ import {
 
 const roleConfig = {
   shop_owner: { label: "Chủ Shop", icon: ShieldAlert, cls: "bg-amber-50 text-amber-700 border-amber-200" },
-  super_admin: { label: "Super Admin", icon: ShieldCheck, cls: "bg-red-50 text-red-700 border-red-200" },
+  manager: { label: "Quản lý", icon: ShieldCheck, cls: "bg-purple-50 text-purple-700 border-purple-200" },
   staff: { label: "Nhân viên Sale", icon: Shield, cls: "bg-blue-50 text-blue-700 border-blue-200" },
 };
 
@@ -88,12 +88,39 @@ export default function StaffSettingsPage() {
     } catch { }
   };
 
-  const handleDelete = (id) => {
-    // Chưa hỗ trợ xoá ở DB, tạm làm mock UI
+  const handleDelete = async (id, name) => {
+    if (!confirm(`Bạn chắc chắn muốn xóa nhân viên "${name}"? Hành động này không thể hoàn tác.`)) return;
+    try {
+      const res = await authFetch(`${API_BASE}/api/staff/${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (res?.ok) {
+        toast({ title: "🗑️ Đã xóa nhân viên", description: data.message });
+        loadData();
+      } else {
+        toast({ title: "❌ Lỗi", description: data.error, variant: "destructive" });
+      }
+    } catch (err) {
+      toast({ title: "❌ Lỗi kết nối", description: err.message, variant: "destructive" });
+    }
   };
 
-  const handleToggleRole = (id, newRole) => {
-    // Chưa API
+  const handleToggleRole = async (id, newRole) => {
+    try {
+      const res = await authFetch(`${API_BASE}/api/staff/${id}/role`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: newRole }),
+      });
+      const data = await res.json();
+      if (res?.ok) {
+        toast({ title: "🔄 Đã đổi quyền", description: data.message });
+        loadData();
+      } else {
+        toast({ title: "❌ Lỗi", description: data.error, variant: "destructive" });
+      }
+    } catch (err) {
+      toast({ title: "❌ Lỗi kết nối", description: err.message, variant: "destructive" });
+    }
   };
 
   return (
@@ -145,7 +172,7 @@ export default function StaffSettingsPage() {
               <div className="text-xs text-zinc-500 mt-0.5">Đang online</div>
             </div>
             <div className="bg-white rounded-xl border border-zinc-200 p-4 shadow-sm">
-              <div className="text-2xl font-bold text-blue-600">{staff.reduce((sum, s) => sum + s.assigned_customers, 0)}</div>
+              <div className="text-2xl font-bold text-blue-600">{staff.reduce((sum, s) => sum + (s.assigned_customers || 0), 0)}</div>
               <div className="text-xs text-zinc-500 mt-0.5">Khách được gán</div>
             </div>
           </div>
@@ -184,7 +211,7 @@ export default function StaffSettingsPage() {
                         <select value={member.role} onChange={(e) => handleToggleRole(member.id, e.target.value)}
                           className={cn("text-[10px] font-bold px-3 py-1 rounded-full border cursor-pointer outline-none", role.cls)}>
                           <option value="staff">Nhân viên Sale</option>
-                          <option value="super_admin">Super Admin</option>
+                          <option value="manager">Quản lý</option>
                           <option value="shop_owner">Chủ Shop</option>
                         </select>
                       </td>
@@ -200,8 +227,9 @@ export default function StaffSettingsPage() {
                         <span className="text-sm font-bold text-zinc-700">{member.assigned_customers}</span>
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <button onClick={() => handleDelete(member.id)}
-                          className="p-2 rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-600 transition-colors opacity-0 group-hover:opacity-100">
+                        <button onClick={() => handleDelete(member.id, member.name)}
+                          className="p-2 rounded-lg bg-red-50 text-red-400 hover:bg-red-100 hover:text-red-600 transition-colors border border-red-100 hover:border-red-200"
+                          title="Xóa nhân viên">
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </td>
@@ -244,7 +272,7 @@ export default function StaffSettingsPage() {
               <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}
                 className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300 cursor-pointer">
                 <option value="staff">Nhân viên Sale</option>
-                <option value="super_admin">Super Admin</option>
+                <option value="manager">Quản lý</option>
               </select>
             </div>
             <button onClick={handleAdd}

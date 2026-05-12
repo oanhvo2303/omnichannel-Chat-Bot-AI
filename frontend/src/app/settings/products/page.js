@@ -7,7 +7,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Package, Plus, Search, Edit3, Trash2, DollarSign, Hash, Save, PackageOpen,
-  Loader2, AlertTriangle, ArrowUpDown, BarChart3, Layers, X
+  Loader2, AlertTriangle, ArrowUpDown, BarChart3, Layers, X, ImagePlus, FileText,
+  Tag, Upload, CheckCircle2, Library
 } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
@@ -23,8 +24,12 @@ export default function ProductsSettingsPage() {
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ name: "", sku: "", price: "", stock_quantity: "", image_url: "" });
+  const [form, setForm] = useState({ name: "", sku: "", price: "", stock_quantity: "", image_url: "", description: "", attributes: [], images: [] });
   const [volumeEnabled, setVolumeEnabled] = useState(false);
+  const [imageUploading, setImageUploading] = useState(false);
+  const [showLibrary, setShowLibrary] = useState(false);
+  const [libraryItems, setLibraryItems] = useState([]);
+  const [libraryLoading, setLibraryLoading] = useState(false);
   const [volumeTiers, setVolumeTiers] = useState([]);
 
   // Delete dialog
@@ -60,8 +65,48 @@ export default function ProductsSettingsPage() {
       return sortDir === "desc" ? -cmp : cmp;
     });
 
+  const fetchLibrary = async () => {
+    setLibraryLoading(true);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE}/api/upload/library`, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      setLibraryItems(Array.isArray(data.items) ? data.items : []);
+    } catch { } finally { setLibraryLoading(false); }
+  };
+
+  const handleImageUpload = async (file) => {
+    if (!file) return;
+    setImageUploading(true);
+    try {
+      const token = localStorage.getItem("token");
+      const fd = new FormData(); fd.append("file", file);
+      const res = await fetch(`${API_BASE}/api/upload`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: fd });
+      const data = await res.json();
+      if (res.ok) setForm(f => ({ ...f, images: [...f.images, data.url], image_url: f.images.length === 0 ? data.url : f.image_url }));
+      else toast({ title: "❌ Upload thất bại", description: data.error, variant: "destructive" });
+    } catch (e) { toast({ title: "❌ Lỗi", description: e.message, variant: "destructive" }); }
+    finally { setImageUploading(false); }
+  };
+
+  const addImageFromLibrary = (url) => {
+    setForm(f => ({
+      ...f,
+      images: f.images.includes(url) ? f.images : [...f.images, url],
+      image_url: f.images.length === 0 ? url : f.image_url,
+    }));
+    setShowLibrary(false);
+  };
+
+  const removeImage = (url) => {
+    setForm(f => {
+      const newImages = f.images.filter(u => u !== url);
+      return { ...f, images: newImages, image_url: newImages[0] || "" };
+    });
+  };
+
   const resetForm = () => {
-    setForm({ name: "", sku: "", price: "", stock_quantity: "", image_url: "" });
+    setForm({ name: "", sku: "", price: "", stock_quantity: "", image_url: "", description: "", attributes: [], images: [] });
     setVolumeEnabled(false);
     setVolumeTiers([]);
   };
@@ -77,7 +122,10 @@ export default function ProductsSettingsPage() {
         body: JSON.stringify({
           name: form.name.trim(), sku: form.sku || null,
           price: Number(form.price) || 0, stock_quantity: Number(form.stock_quantity) || 0,
-          image_url: form.image_url || null,
+          image_url: form.images[0] || form.image_url || null,
+          images: form.images.length > 0 ? form.images : null,
+          description: form.description || null,
+          attributes: form.attributes.length > 0 ? form.attributes : null,
           volume_pricing: volumeEnabled && volumeTiers.length > 0
             ? volumeTiers.map(t => ({ min_qty: Number(t.min_qty), price: Number(t.price) })).filter(t => t.min_qty > 0 && t.price > 0)
             : null,
@@ -103,6 +151,9 @@ export default function ProductsSettingsPage() {
       name: product.name, sku: product.sku || "",
       price: String(product.price), stock_quantity: String(product.stock_quantity),
       image_url: product.image_url || "",
+      description: product.description || "",
+      attributes: Array.isArray(product.attributes) ? product.attributes : [],
+      images: Array.isArray(product.images) ? product.images : (product.image_url ? [product.image_url] : []),
     });
     const tiers = product.volume_pricing || [];
     setVolumeEnabled(tiers.length > 0);
@@ -121,7 +172,10 @@ export default function ProductsSettingsPage() {
         body: JSON.stringify({
           name: form.name.trim(), sku: form.sku || null,
           price: Number(form.price) || 0, stock_quantity: Number(form.stock_quantity) || 0,
-          image_url: form.image_url || null,
+          image_url: form.images[0] || form.image_url || null,
+          images: form.images.length > 0 ? form.images : null,
+          description: form.description || null,
+          attributes: form.attributes.length > 0 ? form.attributes : null,
           volume_pricing: volumeEnabled && volumeTiers.length > 0
             ? volumeTiers.map(t => ({ min_qty: Number(t.min_qty), price: Number(t.price) })).filter(t => t.min_qty > 0 && t.price > 0)
             : null,
@@ -130,7 +184,9 @@ export default function ProductsSettingsPage() {
       if (res.ok) {
         setProducts((prev) => prev.map((p) =>
           p.id === editingProduct.id
-            ? { ...p, name: form.name.trim(), sku: form.sku, price: Number(form.price), stock_quantity: Number(form.stock_quantity), image_url: form.image_url,
+            ? { ...p, name: form.name.trim(), sku: form.sku, price: Number(form.price),
+                stock_quantity: Number(form.stock_quantity), image_url: form.images[0] || form.image_url,
+                description: form.description, attributes: form.attributes, images: form.images,
                 volume_pricing: volumeEnabled && volumeTiers.length > 0
                   ? volumeTiers.map(t => ({ min_qty: Number(t.min_qty), price: Number(t.price) })).filter(t => t.min_qty > 0 && t.price > 0)
                   : null }
@@ -344,17 +400,94 @@ export default function ProductsSettingsPage() {
                   className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300" />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-semibold text-zinc-500 block mb-1.5">Tồn kho</label>
-                <input type="number" value={form.stock_quantity} onChange={(e) => setForm({ ...form, stock_quantity: e.target.value })} placeholder="100"
-                  className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300" />
+            <div>
+              <label className="text-xs font-semibold text-zinc-500 block mb-1.5">Tồn kho</label>
+              <input type="number" value={form.stock_quantity} onChange={(e) => setForm({ ...form, stock_quantity: e.target.value })} placeholder="100"
+                className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300" />
+            </div>
+
+            {/* ══════ Image Upload (Multi) ══════ */}
+            <div>
+              <label className="text-xs font-semibold text-zinc-500 block mb-1.5">Hình ảnh sản phẩm</label>
+              {/* Image grid */}
+              <div className="flex flex-wrap gap-2 mb-2">
+                {form.images.map((url, idx) => (
+                  <div key={idx} className="relative w-16 h-16 rounded-xl overflow-hidden border-2 border-zinc-200 flex-shrink-0 group">
+                    <img src={url} alt="" className="w-full h-full object-cover" />
+                    {idx === 0 && (
+                      <div className="absolute bottom-0 left-0 right-0 bg-blue-500/80 text-white text-[8px] font-bold text-center py-0.5">Chính</div>
+                    )}
+                    <button type="button" onClick={() => removeImage(url)}
+                      className="absolute top-0.5 right-0.5 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <X className="w-2.5 h-2.5 text-white" />
+                    </button>
+                  </div>
+                ))}
+                {/* Add more placeholder */}
+                <div className="w-16 h-16 rounded-xl border-2 border-dashed border-zinc-200 flex items-center justify-center bg-zinc-50">
+                  <ImagePlus className="w-5 h-5 text-zinc-300" />
+                </div>
               </div>
-              <div>
-                <label className="text-xs font-semibold text-zinc-500 block mb-1.5">URL hình ảnh</label>
-                <input value={form.image_url} onChange={(e) => setForm({ ...form, image_url: e.target.value })} placeholder="https://..."
-                  className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300" />
+              {/* Actions */}
+              <div className="flex gap-2">
+                <label className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl cursor-pointer transition-colors">
+                  {imageUploading ? <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" /> : <Upload className="w-3.5 h-3.5 text-blue-600" />}
+                  <span className="text-xs font-semibold text-blue-700">{imageUploading ? "Đang upload..." : "Tải ảnh lên"}</span>
+                  <input type="file" accept="image/*" multiple className="hidden" onChange={e => {
+                    Array.from(e.target.files).forEach(f => handleImageUpload(f));
+                    e.target.value = "";
+                  }} />
+                </label>
+                <button type="button" onClick={() => { setShowLibrary(true); fetchLibrary(); }}
+                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-violet-50 hover:bg-violet-100 border border-violet-200 rounded-xl transition-colors">
+                  <Library className="w-3.5 h-3.5 text-violet-600" />
+                  <span className="text-xs font-semibold text-violet-700">Chọn từ thư viện</span>
+                </button>
               </div>
+              {form.images.length > 1 && <p className="text-[10px] text-zinc-400 mt-1">Ảnh đầu tiên là ảnh chính (thumbnail)</p>}
+            </div>
+
+            {/* ══════ Description (AI Knowledge) ══════ */}
+            <div>
+              <label className="text-xs font-semibold text-zinc-500 block mb-1.5">
+                <span className="flex items-center gap-1.5"><FileText className="w-3.5 h-3.5 text-emerald-500" /> Mô tả sản phẩm (AI học từ đây)</span>
+              </label>
+              <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                rows={3} placeholder="VD: Giày da cá sấu handmade cao cấp. Size 38-45. Màu nâu, đen, be. Bảo hành trọn đời. Giao hàng toàn quốc..."
+                className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-300 resize-none" />
+              <p className="text-[10px] text-zinc-400 mt-1">AI sẽ dùng thông tin này để tư vấn khách hàng chính xác hơn</p>
+            </div>
+
+            {/* ══════ Attributes (Size, Color...) ══════ */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-zinc-500 flex items-center gap-1.5">
+                  <Tag className="w-3.5 h-3.5 text-amber-500" /> Thuộc tính (Size, Màu sắc...)
+                </label>
+                <button type="button" onClick={() => setForm(f => ({ ...f, attributes: [...f.attributes, { key: "", value: "" }] }))}
+                  className="text-[10px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1">
+                  <Plus className="w-3 h-3" /> Thêm
+                </button>
+              </div>
+              {form.attributes.length === 0 ? (
+                <p className="text-[11px] text-zinc-400 italic">VD: Size → 38,39,40,41,42 | Màu sắc → Nâu, Đen, Be</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {form.attributes.map((attr, i) => (
+                    <div key={i} className="flex gap-1.5 items-center">
+                      <input value={attr.key} onChange={e => setForm(f => ({ ...f, attributes: f.attributes.map((a, idx) => idx === i ? { ...a, key: e.target.value } : a) }))}
+                        placeholder="Size" className="w-24 px-3 py-1.5 bg-zinc-50 border border-zinc-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-300 font-semibold" />
+                      <span className="text-zinc-300 text-xs">→</span>
+                      <input value={attr.value} onChange={e => setForm(f => ({ ...f, attributes: f.attributes.map((a, idx) => idx === i ? { ...a, value: e.target.value } : a) }))}
+                        placeholder="38,39,40,41,42" className="flex-1 px-3 py-1.5 bg-zinc-50 border border-zinc-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-300" />
+                      <button type="button" onClick={() => setForm(f => ({ ...f, attributes: f.attributes.filter((_, idx) => idx !== i) }))}
+                        className="w-6 h-6 bg-red-50 hover:bg-red-100 text-red-400 rounded-lg flex items-center justify-center transition-colors">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* ══════ Volume Pricing (Giá sỉ) ══════ */}
@@ -456,6 +589,43 @@ export default function ProductsSettingsPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Library Modal */}
+      <Dialog open={showLibrary} onOpenChange={setShowLibrary}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Library className="w-5 h-5 text-violet-500" /> Thư viện Media
+            </DialogTitle>
+          </DialogHeader>
+          {libraryLoading ? (
+            <div className="flex items-center justify-center py-12 text-zinc-400">
+              <Loader2 className="w-5 h-5 animate-spin mr-2" /> Đang tải...
+            </div>
+          ) : libraryItems.length === 0 ? (
+            <div className="text-center py-12 text-zinc-400 text-sm">Chưa có file nào trong thư viện</div>
+          ) : (
+            <div className="grid grid-cols-5 gap-2 max-h-72 overflow-y-auto p-1">
+              {libraryItems.filter(item => !item.mimetype?.startsWith('video/')).map(item => {
+                const isSelected = form.images.includes(item.url);
+                return (
+                  <div key={item.id} onClick={() => addImageFromLibrary(item.url)}
+                    className={`relative group cursor-pointer rounded-xl overflow-hidden border-2 transition-all ${isSelected ? 'border-emerald-400' : 'border-transparent hover:border-violet-400'}`}>
+                    <img src={item.url} alt={item.filename} className="w-full h-20 object-cover bg-zinc-100" />
+                    <div className={`absolute inset-0 flex items-center justify-center transition-all ${isSelected ? 'bg-emerald-500/20' : 'bg-violet-500/0 group-hover:bg-violet-500/20'}`}>
+                      {isSelected
+                        ? <CheckCircle2 className="w-5 h-5 text-emerald-600 drop-shadow-lg" />
+                        : <CheckCircle2 className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 drop-shadow-lg" />
+                      }
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
+
   );
 }

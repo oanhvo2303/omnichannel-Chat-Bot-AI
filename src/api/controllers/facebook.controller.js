@@ -153,21 +153,26 @@ const sendMessagePart = async (recipientId, part, pageAccessToken) => {
 
 /**
  * Gửi tin nhắn qua Facebook Send API (Inbox)
+ * @throws {Error} nếu Facebook trả về lỗi hoặc mất kết nối
+ * → Caller phải catch để tránh lưu DB 'đã gửi' khi thực ra Facebook reject
  */
 const callSendAPI = async (recipientId, text, pageAccessToken) => {
-  if (!pageAccessToken) return;
-  try {
-    const response = await fetch(`https://graph.facebook.com/v21.0/me/messages?access_token=${pageAccessToken}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recipient: { id: recipientId }, message: { text } }),
-    });
-    const data = await response.json();
-    if (!response.ok) console.error('[FB SEND] Lỗi:', data.error?.message);
-    else console.log(`[FB SEND] Reply inbox → ${recipientId}`);
-  } catch (error) {
-    console.error('[FB SEND] Network error:', error.message);
+  if (!pageAccessToken) {
+    throw new Error('[FB SEND] Thiếu page_access_token — không thể gửi tin');
   }
+  const response = await fetch(`https://graph.facebook.com/v21.0/me/messages?access_token=${pageAccessToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipient: { id: recipientId }, message: { text } }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    const fbErr = data.error?.message || JSON.stringify(data);
+    console.error(`[FB SEND] ❌ Facebook API error → ${recipientId}: ${fbErr}`);
+    throw new Error(`FB_SEND_FAILED: ${fbErr}`);
+  }
+  console.log(`[FB SEND] ✅ Reply inbox → ${recipientId} (mid: ${data.message_id || 'N/A'})`);
+  return data; // { recipient_id, message_id }
 };
 
 /**
