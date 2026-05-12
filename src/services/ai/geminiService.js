@@ -680,9 +680,16 @@ CHÚ Ý VỀ PHONG CÁCH TIN NHẮN:
         console.log(`[GEMINI AGENTIC] 💬 Text response sau ${elapsed}ms: "${textResponse?.substring(0, 100)}..."`);
         console.log('─'.repeat(60));
 
+        // ★ BUG FIX: khai báo các biến trước khi dùng (thiếu → ReferenceError → AI im lặng)
+        const trimmed    = textResponse?.trim() || '';
+        let intent       = 'HỖ_TRỢ';
+        let reply        = trimmed;       // fallback: raw text nếu không parse được JSON
+        let confidence   = 0.5;
+        let source       = 'general';
+
         // Robust JSON extractor — xử lý 3 pattern model output:
         // [A] Pure JSON: {"intent":...}
-        // [B] Natural text + appended JSON: "Dạ size 36...\n{"intent":...}"  ← lỗi hiện tại
+        // [B] Natural text + appended JSON: "Dạ size 36...\n{"intent":...}"
         // [C] Pure natural text (không có JSON)
         const extractJSON = (text) => {
           if (!text) return null;

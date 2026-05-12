@@ -802,22 +802,28 @@ ${knowledgeEntries.join('\n\n')}
           const noFaqMatch       = ragCtx.noFaqMatch;
           const isShortGreeting  = (rawAnalysis.reply || '').trim().length < 60;
           let effectiveConf      = ragResult.confidence;
-          if (noFaqMatch && !rawAnalysis.toolCalls?.length && !isShortGreeting) {
+
+          // Bug 2 fix: noFaqMatch penalty — bất kể tool call phụ (tag/script)
+          // Chỉ bypass penalty khi tool call CHÍNH là tạo đơn (grounded by catalog)
+          const hasOrderToolCall = rawAnalysis.toolCalls?.some(t => t.name === 'create_system_order');
+          const hasAuxToolCall   = rawAnalysis.toolCalls?.some(t => t.name !== 'create_system_order');
+          if (noFaqMatch && !hasOrderToolCall && !isShortGreeting) {
             effectiveConf = Math.min(effectiveConf, 0.45);
-            console.log(`[RAG] ⚠️ noFaqMatch + long reply → conf penalty ${ragResult.confidence}→${effectiveConf}`);
+            console.log(`[RAG] ⚠️ noFaqMatch + long reply → conf penalty ${ragResult.confidence}→${effectiveConf}${hasAuxToolCall ? ' (aux tool không bypass)' : ''}`);
           }
 
-          // Escalation logic
+          // Bug 2 fix: align threshold với RAG min-score (0.55) thay vì 0.45
+          // Confidence 0.5 = low quality theo RAG → phải escalate, không gửi cho khách
+          const ESCALATE_CONF_THRESHOLD = 0.55;
           const hasValidReply      = rawAnalysis.reply && rawAnalysis.reply.trim().length > 5;
           const hasToolCalls       = rawAnalysis.toolCalls?.length > 0;
-          const isExplicitEscalate = ragResult.source === 'escalate'; // Gemini tự khai không biết
-          const isVeryLowConf      = typeof effectiveConf === 'number' && effectiveConf <= 0.45;
-          // noFaqMatch + reply dài + source bất kỳ → Gemini đang hallucinate (bịa thông tin shop)
-          const isHallucinatedLong = noFaqMatch && !isShortGreeting && !hasToolCalls && hasValidReply;
-          // Hard escalate:
-          // [A] không có reply hợp lệ + low conf/explicit escalate
-          // [B] Gemini tự khai không biết dù đã có reply
-          // [C] noFaqMatch + reply dài → hallucination risk
+          const isExplicitEscalate = ragResult.source === 'escalate';
+          const isVeryLowConf      = typeof effectiveConf === 'number' && effectiveConf < ESCALATE_CONF_THRESHOLD;
+
+          // Bug 3 fix: hallucination guard chỉ bypass khi tool call là ORDER (grounded by catalog)
+          // Aux tools (tag, script) KHÔNG miễn trừ hallucination check
+          const isHallucinatedLong = noFaqMatch && !isShortGreeting && !hasOrderToolCall && hasValidReply;
+
           const doHardEscalate = (!hasValidReply && !hasToolCalls && (isExplicitEscalate || isVeryLowConf))
                                || (isExplicitEscalate && hasValidReply)
                                || isHallucinatedLong;
