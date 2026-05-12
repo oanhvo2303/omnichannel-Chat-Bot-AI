@@ -412,8 +412,22 @@ const agenticAnalyzeMessage = async (messageText, systemPrompt, history, context
   const { executeAIOrder } = require('./orderExecutor');
   const { executeAITag } = require('./tagExecutor');
 
-  let historyText = history.map(h => `${h.sender === 'customer' ? 'Khách hàng' : 'Nhân viên/AI'}: "${h.text}"`).join('\n');
+  // Format history: phân biệt bot/AI với nhân viên người thật
+  // Bug fix: trước đây bot + nhân viên đều là 'Nhân viên/AI' → AI không biết chính mình đã nói gì
+  // → Khi khách hỏi "bao giá" sau khi bot giới thiệu GTB123, AI phải nhớ context đó
+  let historyText = history.map(h => {
+    let label;
+    if (h.sender === 'customer') {
+      label = 'Khách hàng';
+    } else if (h.sender_type === 'bot' || h.sender === 'bot') {
+      label = 'Bạn'; // ← AI nhận ra đây là tin MÌNH đã nói → dùng để hiểu context
+    } else {
+      label = 'Nhân viên';
+    }
+    return `${label}: "${h.text}"`;
+  }).join('\n');
   if (!historyText) historyText = '(Chưa có lịch sử chat trước đó)';
+
 
   const agenticPrompt = `
 Bạn là NHÂN VIÊN BÁN HÀNG THẬT (con người thật) đang chat với khách trên Messenger.
@@ -437,7 +451,14 @@ ${systemPrompt || 'Bạn là nhân viên tư vấn bán hàng, hãy trả lời 
 DANH SÁCH SẢN PHẨM CỦA SHOP:
 ${productCatalog || '(Chưa có danh mục sản phẩm)'}
 ====================
-LỊCH SỬ CHAT:
+LỊCH SỬ CHAT GẦN NHẤT (quan trọng — đọc kỹ trước khi trả lời):
+HƯỚNG DẪN ĐỌC LỊCH SỬ:
+- "Bạn:" = những gì BẠN (nhân viên/bot) đã nói với khách trước đó
+- "Khách hàng:" = những gì khách đã nhắn
+- "Nhân viên:" = nhân viên người thật đã trả lời
+BẮT BUỘC: Đọc toàn bộ lịch sử để hiểu ngữ cảnh cuộc hội thoại.
+Đặc biệt: Nếu khách dùng từ chỉ định mơ hồ như "đây", "đó", "cái đó", "sản phẩm đó", "giá đó", "cái này" → BẮT BUỘC tìm trong lịch sử xem sản phẩm/mã nào được đề cập gần nhất và trả lời về SẢN PHẨM ĐÓ, KHÔNG hỏi lại khách.
+Tương tự: Nếu khách hỏi "bao giá" / "giá bao nhiêu" mà trong lịch sử đã đề cập sản phẩm cụ thể → BÁO GIÁ LUÔN sản phẩm đó, không hỏi lại "muốn báo giá sản phẩm nào".
 ${historyText}
 ====================
 TIN NHẮN HIỆN TẠI CỦA KHÁCH:

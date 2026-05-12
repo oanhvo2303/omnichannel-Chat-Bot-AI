@@ -635,14 +635,22 @@ async function processInboxMessage(pageId, senderId, messageText, imageData = nu
         // ★ Hiển thị "đang gõ..." trên Messenger để khách biết đang được phản hồi
         await sendTypingOn(senderId, shop.page_access_token);
 
-        // ★ Lấy lịch sử hội thoại — P1c fix: loại trừ tin hiện tại (id < msgResult.lastID) để tránh lặp context
-        const HISTORY_LIMIT = shop.ai_full_history ? 300 : 10;
+        // ★ Lấy lịch sử hội thoại — chỉ lấy tin nhắn thực (bỏ bill, ghi chú nội bộ, system tags)
+        // Bug fix: trước đây lấy cả bị lịn lộn với hóa đơn/note → AI mất ngữ cảnh sản phẩm
+        const HISTORY_LIMIT = shop.ai_full_history ? 300 : 20; // tăng lên 20 để AI có đủ context
         const historyRows = await db.all(
-          `SELECT sender, text FROM Messages WHERE customer_id = ? AND id < ? ORDER BY timestamp DESC LIMIT ?`,
+          `SELECT sender, sender_type, text, intent FROM Messages
+           WHERE customer_id = ?
+             AND id < ?
+             AND (is_internal IS NULL OR is_internal = 0)
+             AND (sender_type IS NULL OR sender_type != 'system')
+             AND NOT (intent = 'bill')
+             AND text IS NOT NULL AND text != ''
+           ORDER BY timestamp DESC LIMIT ?`,
           [customer.id, msgResult.lastID, HISTORY_LIMIT]
         );
         historyRows.reverse();
-        console.log(`[AI TRACE] 📜 History mode: ${shop.ai_full_history ? 'FULL (' + historyRows.length + ' msgs)' : 'COMPACT (' + historyRows.length + '/10 msgs)'}`);
+        console.log(`[AI TRACE] 📜 History: ${historyRows.length} msgs (filtered noise) mode=${shop.ai_full_history ? 'FULL' : 'COMPACT'}`);
 
         // Fix Issue 3: Relevance-ranked catalog — chỉ inject top 15 SP liên quan thay vì toàn bộ
         // Giảm token cost O(n) → O(15) khi shop có nhiều sản phẩm, tăng độ chính xác context
